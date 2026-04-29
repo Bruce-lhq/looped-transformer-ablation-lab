@@ -33,12 +33,23 @@
   - 6.3. [Sink Padding 消融](#3-sink-padding-消融)
   - 6.4. [残差门控消融](#4-残差门控消融)
 7. [依赖](#依赖)
-8. [未来工作](#未来工作)
-  - 8.1. [泛化能力测试（OOD）](#泛化能力测试ood)
-  - 8.2. [非线性回归](#非线性回归)
-  - 8.3. [模型探针](#模型探针-model-probing)
-  - 8.4. [优化与正则化](#优化与正则化)
-  - 8.5. [新任务扩展](#新任务扩展)
+8. [待完成与未来工作](#待完成与未来工作)
+  - 8.1. [A. 开箱即用](#a-开箱即用)
+    - 8.1.1. [全参数扫描](#全参数扫描)
+  - 8.2. [B. 少量扩展](#b-少量扩展)
+    - 8.2.1. [两处 pass 补全](#两处-pass-补全)
+    - 8.2.2. [首 loss 归一化](#首-loss-归一化)
+    - 8.2.3. [分头 attention 可视化](#分头-attention-可视化)
+    - 8.2.4. [泛化能力测试（OOD）](#泛化能力测试ood)
+    - 8.2.5. [非线性回归](#非线性回归)
+    - 8.2.6. [模型探针](#模型探针)
+    - 8.2.7. [优化与正则化](#优化与正则化)
+    - 8.2.8. [Grokking 观察](#grokking-观察)
+  - 8.3. [C. 新模块开发](#c-新模块开发)
+    - 8.3.1. [画梯度下降图](#画梯度下降图)
+    - 8.3.2. [添加归纳偏置](#添加归纳偏置)
+    - 8.3.3. [新任务扩展](#新任务扩展)
+    - 8.3.4. [ExperimentTable GUI](#experimenttable-gui)
 
 ---
 
@@ -524,42 +535,89 @@ pip install -r requirements.txt
 
 ---
 
-## 未来工作
+## 待完成与未来工作
 
-以下实验可直接基于现有 `ExperimentTable` 框架进行，只需修改 `params_groups` 或扩展 `dataloader` 即可：
+按上手难度从低到高排列。每个任务均标注了主要涉及的文件。
 
-### 泛化能力测试（OOD）
+### A. 开箱即用
 
-在不改变模型结构的前提下，测试训练分布与测试分布不一致时的泛化表现：
+无需改代码，直接用 `ExperimentTable` 跑。
+
+#### 全参数扫描
+
+利用 `ExperimentTable` 对任意参数进行对比实验：
+
+- **离散参数**（如 `pe_type`、`norm_type`、`ffn_type`）：在 `params_groups` 中枚举取值，`run()` 后直接 `plot()` 画曲线对比
+- **连续参数**（如 `lr`、`num_blocks`、`d_model`）：通过 Optuna 等工具自动搜索最优值，或手动离散化为多组实验画曲线
+
+### B. 少量扩展
+
+在现有 1–2 个文件上新增功能即可完成。
+
+#### 两处 pass 补全
+
+`experiment_table.py` 的 `plot()` 中有两处 `pass` 待实现：
+
+- **实验汇总柱状图**：`result_lists` 横轴为 `'experiment'` 时，画各实验的 `final_loss` 等指标柱状图
+- **评估结果画图**：`modes` 含 `'evaluate'` 时，渲染评估模式的对比图
+
+#### 首 loss 归一化
+
+新增一个 `plot()` 选项，将每条 loss 曲线除以其第一个 epoch 值，使所有实验从 1.0 出发，比较相对下降幅度，消除初始尺度差异。
+
+#### 分头 attention 可视化
+
+利用已有的 `AttentionProbe` 捕获的注意力矩阵，对 `captured_attention` 按头切片画热力图，观察不同头的注意力模式差异。
+
+#### 泛化能力测试（OOD）
+
+在 `data.py` 中新增测试数据生成逻辑，不改变模型结构：
 
 - **分布偏移**：训练时 $x \sim \mathcal{N}(0, I)$，评估时 $x \sim \mathcal{N}(5, 2I)$ 或改变维度
 - **噪声鲁棒性**：在测试标签上添加不同程度的高斯噪声
 
-### 非线性回归
+#### 非线性回归
 
-将数据生成器从 $y = w^T x$ 扩展为非线性函数，检验 Looped Transformer 在更复杂函数空间上的拟合能力：
+在 `data.py` 中新增 `nonlinear_data_generator` 并在 `dataloader` 的 `data_type` 中注册：
 
 - $y = \text{ReLU}(w_2^T \cdot \text{ReLU}(w_1^T x))$（两层 MLP）
 - $y = \sin(w^T x)$
 - $y = w_1^T x + (w_2^T x)^2$
 
-实现方式：在 `data.py` 中新增 `nonlinear_data_generator` 并在 `dataloader` 的 `data_type` 中注册。
+#### 模型探针
 
-### 模型探针 (Model Probing)
+在 `ToyModel` 各层插入线性探针，检测模型在何时学会线性回归的闭式解 $w = (X^TX)^{-1}X^Ty$。
 
-利用 `AttentionProbe` 已捕获的注意力矩阵和 `num_eff` 机制：
-
-- **分头看 attention**：使用 `compare_experiments=False` 模式，对 `captured_attention` 按头切片可视化
-- **探针分析**：在 `ToyModel` 各层插入线性探针，检测模型在何时学会线性回归的闭式解 $w = (X^TX)^{-1}X^Ty$
-
-### 优化与正则化
+#### 优化与正则化
 
 - **谱归一化**：对 `W_Q`、`W_K`、`W_V` 等权重矩阵施加谱归一化，观察对收敛稳定性的影响
 - **loss 加权平均**：将不同 `num_eff` 层的预测进行加权组合，替代当前的等权平均
-- **Grokking 观察**：在大显存设备（如 RTX 5090）上增大 `epochs` 和 `batch_size`，观察是否出现顿悟现象
 
-### 新任务扩展
+#### Grokking 观察
+
+在大显存设备上增大 `epochs` 和 `batch_size`，观察是否出现顿悟现象（loss 长时间不降后突然收敛）。
+
+### C. 新模块开发
+
+需要新建模块或对核心架构做较大改动。
+
+#### 画梯度下降图
+
+在 `experiment.py` 训练循环中收集梯度范数或参数变化轨迹，新增可视化模块画参数空间中的优化路径。
+
+#### 添加归纳偏置
+
+在 `toy_model.py` 或 `transformer_block.py` 中引入结构性先验：
+
+- 权重初始化策略（如正交初始化、恒等初始化）
+- 架构约束（如强制某层权重对称、低秩分解）
+- 正则化先验（如控制门控参数的范围）
+
+#### 新任务扩展
 
 - **逻辑推理任务**：将数据生成器替换为数独、序列预测等离散推理任务
 - **物理系统**：用常微分方程（ODE）生成数据，测试模型对连续动力学系统的拟合能力
-- **全参数扫描**：利用 `ExperimentTable` 对 `num_blocks`、`num_eff`、`d_model`、`lr` 等连续参数进行网格搜索或 Optuna 自动调参
+
+#### ExperimentTable GUI
+
+新建图形界面（如 Gradio / Streamlit），可视化配置 `params_groups`、启停实验、实时查看 loss 曲线。
