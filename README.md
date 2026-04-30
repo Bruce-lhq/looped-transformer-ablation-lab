@@ -33,23 +33,27 @@
   - 6.3. [Sink Padding 消融](#3-sink-padding-消融)
   - 6.4. [残差门控消融](#4-残差门控消融)
 7. [依赖](#依赖)
-8. [待完成与未来工作](#待完成与未来工作)
-  - 8.1. [A. 开箱即用](#a-开箱即用)
-    - 8.1.1. [全参数扫描](#全参数扫描)
-  - 8.2. [B. 少量扩展](#b-少量扩展)
-    - 8.2.1. [两处 pass 补全](#两处-pass-补全)
-    - 8.2.2. [首 loss 归一化](#首-loss-归一化)
-    - 8.2.3. [分头 attention 可视化](#分头-attention-可视化)
-    - 8.2.4. [泛化能力测试（OOD）](#泛化能力测试ood)
-    - 8.2.5. [非线性回归](#非线性回归)
-    - 8.2.6. [模型探针](#模型探针)
-    - 8.2.7. [优化与正则化](#优化与正则化)
-    - 8.2.8. [Grokking 观察](#grokking-观察)
-  - 8.3. [C. 新模块开发](#c-新模块开发)
-    - 8.3.1. [画梯度下降图](#画梯度下降图)
-    - 8.3.2. [添加归纳偏置](#添加归纳偏置)
-    - 8.3.3. [新任务扩展](#新任务扩展)
-    - 8.3.4. [ExperimentTable GUI](#experimenttable-gui)
+8. [Web 监控面板](#web-监控面板)
+  - 8.1. [启动](#启动)
+  - 8.2. [功能](#功能)
+  - 8.3. [架构](#架构)
+9. [待完成与未来工作](#待完成与未来工作)
+  - 9.1. [A. 开箱即用](#a-开箱即用)
+    - 9.1.1. [全参数扫描](#全参数扫描)
+  - 9.2. [B. 少量扩展](#b-少量扩展)
+    - 9.2.1. [两处 pass 补全](#两处-pass-补全)
+    - 9.2.2. [首 loss 归一化](#首-loss-归一化)
+    - 9.2.3. [分头 attention 可视化](#分头-attention-可视化)
+    - 9.2.4. [泛化能力测试（OOD）](#泛化能力测试ood)
+    - 9.2.5. [非线性回归](#非线性回归)
+    - 9.2.6. [模型探针](#模型探针)
+    - 9.2.7. [优化与正则化](#优化与正则化)
+    - 9.2.8. [Grokking 观察](#grokking-观察)
+  - 9.3. [C. 新模块开发](#c-新模块开发)
+    - 9.3.1. [画梯度下降图](#画梯度下降图)
+    - 9.3.2. [添加归纳偏置](#添加归纳偏置)
+    - 9.3.3. [新任务扩展](#新任务扩展)
+    - 9.3.4. [ExperimentTable GUI ✅](#experimenttable-gui)
 
 ---
 
@@ -150,6 +154,10 @@ Looped_Transformer/
 │   └── residual_gate relative changes.png
 ├── Looped_Transformer.ipynb              # 原始 notebook（代码同上，含实验输出）
 ├── Looped_Transformer.pdf                # 转换自 .ipynb, 适合离线阅读
+├── web_monitor/                          # Web 监控面板
+│   ├── server.py                         # FastAPI 后端（日志劫持 + WebSocket + 动态绘图）
+│   └── index.html                        # 纯 HTML 前端（Retro-Futuristic UI + ECharts）
+├── run_monitor.sh                        # 监控面板一键启动脚本
 ├── requirements.txt
 └── README.md
 ```
@@ -520,18 +528,60 @@ table.run(result_lists=my_plots, parallel_workers=2)
 
 ## 依赖
 
-- Python 3.10+
-- PyTorch 2.x
-- NumPy
-- Matplotlib
+| 用途 | 包 |
+|------|-----|
+| 核心训练 | `torch`, `numpy`, `matplotlib` |
+| Web 监控面板 | `fastapi`, `uvicorn` |
 
 安装：
 
 ```bash
+# 核心依赖
 pip install -r requirements.txt
+# Web 监控面板
+pip install fastapi uvicorn
 ```
 
 设备支持：MPS (Apple Silicon)、CUDA (NVIDIA GPU)、CPU — 自动检测。
+
+---
+
+## Web 监控面板
+
+基于 FastAPI + 纯 HTML/ECharts 的实时训练监控面板，无需修改现有 `.py` 文件，通过 `sys.stdout` 劫持实现零侵入。
+
+### 启动
+
+```bash
+bash run_monitor.sh
+# 浏览器打开 http://localhost:8000
+```
+
+### 功能
+
+| 功能 | 说明 |
+|------|------|
+| **动态参数配置** | 侧边栏动态增删实验卡片，下拉框保留中文注释，选中后仅显示英文变量名 |
+| **一键加载基线** | 内置 5 组基线实验预设，支持全局 manual 参数覆盖和清空操作 |
+| **实时 Loss 曲线** | WebSocket 推送 + ECharts 渲染，TensorBoard 风格 EMA 平滑 |
+| **安全中断** | `ctypes.PyThreadState_SetAsyncExc` 注入异常打断训练，自动 offload |
+| **结果原地展示** | 训练完成后直接在右侧面板展示 Matplotlib 图表 + 摘要，无弹窗 |
+| **Compare 模式** | ON：每指标独立一张图横向对比；OFF：Twinx 双 Y 轴 + 按实验拆分子图 |
+| **可拖动布局** | 侧边栏与监控区之间可拖拽调整宽度，支持折叠/展开 |
+
+### 架构
+
+```
+浏览器 (index.html)                    服务端 (server.py)
+┌──────────────────────┐              ┌──────────────────────┐
+│  参数配置 → JSON     │── POST ──→  │  /api/start          │
+│  ECharts ← WebSocket │←─ epoch ──  │    ↓ asyncio.to_thread│
+│  实时 Loss 曲线      │   loss      │  StdoutHijacker      │
+│  结果图片 + 摘要     │←─ GET ────  │    ↓ 正则提取        │
+│                      │              │  ExperimentTable.run │
+└──────────────────────┘              │  /api/results        │
+                                      └──────────────────────┘
+```
 
 ---
 
@@ -618,6 +668,8 @@ pip install -r requirements.txt
 - **逻辑推理任务**：将数据生成器替换为数独、序列预测等离散推理任务
 - **物理系统**：用常微分方程（ODE）生成数据，测试模型对连续动力学系统的拟合能力
 
-#### ExperimentTable GUI
+#### ExperimentTable GUI ✅
 
-新建图形界面（如 Gradio / Streamlit），可视化配置 `params_groups`、启停实验、实时查看 loss 曲线。
+~~新建图形界面（如 Gradio / Streamlit），可视化配置 `params_groups`、启停实验、实时查看 loss 曲线。~~
+
+已于 `web_monitor/` 中实现：基于 FastAPI + 纯 HTML/ECharts 的实时训练监控面板，支持参数配置、基线加载、实时 Loss、安全中断、EMA 平滑、Compare 模式、可拖动布局。一键启动见上方 [Web 监控面板](#web-监控面板)。
