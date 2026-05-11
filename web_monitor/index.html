@@ -824,7 +824,7 @@
           appendLog(`// ${data.text}`);
           break;
         case 'experiment_done':
-          appendLog(`// 实验 ${(data.experiment || 0) + 1}/${data.total || '?'} 完成 ✓`);
+          appendLog(`// Exp ${(data.experiment || 0) + 1}/${data.total || '?'} 完成 ✓`);
           break;
         default:
           break;
@@ -839,13 +839,13 @@
       // 更新图表数据
       const expKey = `exp_${experiment ?? 0}`;
       if (!STATE.chartData[expKey]) {
-        STATE.chartData[expKey] = { epochs: [], losses: [], name: `实验 ${(experiment ?? 0) + 1}` };
+        STATE.chartData[expKey] = { epochs: [], losses: [], name: `Exp ${(experiment ?? 0) + 1}` };
       }
       STATE.chartData[expKey].epochs.push(epoch);
       STATE.chartData[expKey].losses.push(loss);
 
       // 更新状态文字
-      const expLabel = STATE.totalExperiments > 1 ? `实验 ${(experiment ?? 0) + 1}/${STATE.totalExperiments} · ` : '';
+      const expLabel = STATE.totalExperiments > 1 ? `Exp ${(experiment ?? 0) + 1}/${STATE.totalExperiments} · ` : '';
       DOM.statusTextSidebar.textContent = `${expLabel}Epoch ${epoch}/${total_epochs} · Loss ${loss.toFixed(4)}`;
 
       // 刷新图表
@@ -872,7 +872,7 @@
           // 初始化图表数据存储
           STATE.chartData = {};
           for (let i = 0; i < STATE.totalExperiments; i++) {
-            STATE.chartData[`exp_${i}`] = { epochs: [], losses: [], name: `实验 ${i + 1}` };
+            STATE.chartData[`exp_${i}`] = { epochs: [], losses: [], name: `Exp ${i + 1}` };
           }
           // 训练中隐藏平滑滑块
           DOM.smoothingBar.style.opacity = '0';
@@ -1189,6 +1189,7 @@
       'seed':               { category:'init', label:'seed  (随机种子)',                       type:'number', default:42,     order:19 },
       'timing':             { category:'init', label:'timing  (打印初始化耗时)',                type:'bool',   default:true,  order:20 },
       'optimizer_type':     { category:'init', label:'optimizer_type  (优化器)',               type:'select', options:[['adam','Adam'],['sgd','SGD'],['adamw','AdamW']], default:'adam', order:21 },
+      'wd_adamw':           { category:'init', label:'wd_adamw  (AdamW权重衰减)',              type:'number', default:0.01,   order:22 },
 
       // ── Train Parameters — 严格按 default_setup() 顺序 ──
       'batch_size':         { category:'train', label:'batch_size  (批次大小)',               type:'number', default:64,     order:1 },
@@ -1197,8 +1198,10 @@
       'sink_padding':       { category:'train', label:'sink_padding  (Sink Token组数)',        type:'number', default:null,   order:4 },
       'epochs':             { category:'train', label:'epochs  (训练轮数)',                    type:'number', default:20,     order:5 },
       'data_type':          { category:'train', label:'data_type  (回归数据类型)',              type:'select', options:[['linear','Linear']], default:'linear', order:6 },
-      'scheduler_type':     { category:'train', label:'scheduler_type  (学习率调度器)',         type:'select', options:[['None','None'],['cosine','Cosine']], default:'None', order:7 },
-      'scheduled_training': { category:'train', label:'scheduled_training  (渐进训练)',        type:'bool',   default:true,  order:8 },
+      'scheduler_type':     { category:'train', label:'scheduler_type  (学习率调度器)',         type:'select', options:[['None','None'],['cosine','Cosine'],['step','Step LR']], default:'None', order:7 },
+      'lr_scale':           { category:'train', label:'lr_scale  (LR调度器缩放因子)',           type:'number', default:0.1,    order:8 },
+      'step_size_scheduler':{ category:'train', label:'step_size_scheduler  (StepLR步长)',     type:'number', default:10,     order:9 },
+      'scheduled_training': { category:'train', label:'scheduled_training  (渐进训练)',        type:'bool',   default:true,  order:10 },
     };
 
     // 按 category + order 排序的参数 key 列表
@@ -1223,16 +1226,30 @@
     const METRIC_SCHEMA = {
       epoch: [
         ['loss_history', 'loss_history'],
+        ['y_pred_norm_history', 'y_pred_norm_history'],
+        ['y_true_norm_history', 'y_true_norm_history'],
         ['residual_gate_history_a', 'residual_gate_history_a'],
         ['residual_gate_history_b', 'residual_gate_history_b'],
         ['residual_gate_history_a_mean', 'residual_gate_history_a_mean'],
         ['residual_gate_history_b_mean', 'residual_gate_history_b_mean'],
+        ['residual_gate_history_a_relative', 'residual_gate_history_a_relative'],
+        ['residual_gate_history_b_relative', 'residual_gate_history_b_relative'],
+        ['residual_gate_history_a_mean_relative', 'residual_gate_history_a_mean_relative'],
+        ['residual_gate_history_b_mean_relative', 'residual_gate_history_b_mean_relative'],
         ['residual_gate_history_a_std', 'residual_gate_history_a_std'],
         ['residual_gate_history_b_std', 'residual_gate_history_b_std'],
         ['captured_attention', 'captured_attention'],
       ],
       experiment: [
         ['final_loss', 'final_loss'],
+        ['final_y_pred_norm', 'final_y_pred_norm'],
+        ['final_y_true_norm', 'final_y_true_norm'],
+        ['final_residual_gate_a', 'final_residual_gate_a'],
+        ['final_residual_gate_b', 'final_residual_gate_b'],
+        ['final_residual_gate_a_mean', 'final_residual_gate_a_mean'],
+        ['final_residual_gate_b_mean', 'final_residual_gate_b_mean'],
+        ['final_residual_gate_a_std', 'final_residual_gate_a_std'],
+        ['final_residual_gate_b_std', 'final_residual_gate_b_std'],
         ['init_time', 'init_time'],
         ['train_time', 'train_time'],
       ],
@@ -1445,7 +1462,7 @@
       title.appendChild(dot);
       const label = document.createElement('span');
       label.className = 'text-xs font-display tracking-wider text-neon-cyan';
-      label.textContent = `实验 ${index + 1}`;
+      label.textContent = `Exp ${index + 1}`;
       title.appendChild(label);
       header.appendChild(title);
 
@@ -1467,7 +1484,7 @@
       const nameInput = document.createElement('input');
       nameInput.type = 'text';
       nameInput.dataset.paramKey = 'experiment_name';
-      nameInput.value = `实验 ${index + 1}`;
+      nameInput.value = `Exp ${index + 1}`;
       nameInput.className = 'flex-1 bg-void-950 border border-titanium/30 rounded-btn px-2 py-1 text-xs font-mono text-moon focus:outline-none focus:border-neon-cyan/60 focus:ring-1 focus:ring-neon-cyan/30 transition-all duration-200';
       nameDiv.appendChild(nameInput);
       card.appendChild(nameDiv);
@@ -1497,6 +1514,7 @@
       const card = createExperimentCard(index);
       DOM.experimentsContainer.appendChild(card);
       card.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      updateBaselineOptions();
       return card;
     }
 
@@ -1520,10 +1538,37 @@
       cards.forEach((card, i) => {
         card.dataset.expIndex = i;
         const titleSpan = card.querySelector('.text-neon-cyan');
-        if (titleSpan) titleSpan.textContent = `实验 ${i + 1}`;
+        if (titleSpan) titleSpan.textContent = `Exp ${i + 1}`;
         const nameInput = card.querySelector('input[data-param-key="experiment_name"]');
         if (nameInput && !nameInput.dataset.userModified) {
-          nameInput.value = `实验 ${i + 1}`;
+          nameInput.value = `Exp ${i + 1}`;
+        }
+      });
+      updateBaselineOptions();
+    }
+
+    function updateBaselineOptions() {
+      const cards = DOM.experimentsContainer.querySelectorAll('.param-card');
+      const plotCards = DOM.plotGroupsContainer.querySelectorAll('.plot-group-card');
+      plotCards.forEach(pc => {
+        const sel = pc._baselineSel;
+        if (!sel) return;
+        const prevVal = sel.value;
+        sel.innerHTML = '';
+        const noneOpt = document.createElement('option');
+        noneOpt.value = '';
+        noneOpt.textContent = '无基线';
+        sel.appendChild(noneOpt);
+        cards.forEach((card, i) => {
+          const nameInput = card.querySelector('input[data-param-key="experiment_name"]');
+          const name = nameInput ? nameInput.value.trim() : `Exp ${i + 1}`;
+          const opt = document.createElement('option');
+          opt.value = String(i);
+          opt.textContent = `${i}: ${name}`;
+          sel.appendChild(opt);
+        });
+        if (prevVal && Array.from(sel.options).some(o => o.value === prevVal)) {
+          sel.value = prevVal;
         }
       });
     }
@@ -1611,6 +1656,7 @@
       // ——— 与实验卡片完全一致的样式 ———
       card.className = 'plot-group-card param-card glass-panel rounded-panel border border-titanium/20 p-3 space-y-2.5 animate-slide-up';
       card.dataset.xType = type;
+      card.dataset.baselineIndex = '';  // 默认不设置 baseline
 
       // 头部：编号 + Type 选择 + 删除（仿实验卡片 header 格式）
       const header = document.createElement('div');
@@ -1656,6 +1702,27 @@
       typeDiv.appendChild(typeSel);
       card.appendChild(typeDiv);
 
+      // Baseline 索引输入行
+      const baselineDiv = document.createElement('div');
+      baselineDiv.className = 'flex items-center gap-2';
+      const baselineLbl = document.createElement('span');
+      baselineLbl.className = 'text-2xs font-mono text-moon-dim shrink-0';
+      baselineLbl.textContent = '基线';
+      baselineDiv.appendChild(baselineLbl);
+      const baselineSel = document.createElement('select');
+      baselineSel.className = 'flex-1 bg-void-950 border border-titanium/30 rounded-btn px-2 py-1 text-xs font-mono text-moon focus:outline-none focus:border-neon-purple/60 focus:ring-1 focus:ring-neon-purple/30 transition-all duration-200';
+      const noneOpt = document.createElement('option');
+      noneOpt.value = '';
+      noneOpt.textContent = '无基线';
+      baselineSel.appendChild(noneOpt);
+      // 动态填充实验索引选项（由 updateBaselineOptions 维护）
+      baselineSel.addEventListener('change', () => {
+        card.dataset.baselineIndex = baselineSel.value;
+      });
+      card._baselineSel = baselineSel;
+      baselineDiv.appendChild(baselineSel);
+      card.appendChild(baselineDiv);
+
       // 指标列表容器
       const metricsDiv = document.createElement('div');
       metricsDiv.className = 'plot-group-metrics space-y-1.5';
@@ -1692,12 +1759,13 @@
     }
 
     function collectResultLists() {
-      // ExperimentTable.run 格式: [(metrics_list, x_type), ...]
+      // ExperimentTable.run 格式: [(metrics_list, x_type), ...] 或 [(metrics_list, x_type, baseline_index), ...]
       // 每个图表组卡片 = 一个独立的 Tuple，不合并同类型
       const cards = DOM.plotGroupsContainer.querySelectorAll('.plot-group-card');
       const result = [];
       cards.forEach(card => {
         const xType = card.dataset.xType || 'epoch';
+        const baselineIndex = card.dataset.baselineIndex;
         const metrics = [];
         const selects = card.querySelectorAll('.plot-group-metrics .metric-select-row select');
         selects.forEach(sel => {
@@ -1706,7 +1774,11 @@
           }
         });
         if (metrics.length > 0) {
-          result.push([metrics, xType]);
+          if (baselineIndex !== undefined && baselineIndex !== '') {
+            result.push([metrics, xType, parseInt(baselineIndex)]);
+          } else {
+            result.push([metrics, xType]);
+          }
         }
       });
       return result;
@@ -1727,6 +1799,7 @@
       STATE.experimentCounter = 0;
       STATE.experimentCount = 1;
       addExperimentCard();
+      updateBaselineOptions();
       // 全局高级配置默认添加 epochs
       const epochsRow = createDynamicParamRow('epochs');
       DOM.globalParamsContainer.appendChild(epochsRow);
@@ -1777,7 +1850,7 @@
       // 重置图表数据
       STATE.chartData = {};
       paramsGroups.forEach((_, i) => {
-        STATE.chartData[`exp_${i}`] = { epochs: [], losses: [], name: paramsGroups[i].experiment_name || `实验 ${i + 1}` };
+        STATE.chartData[`exp_${i}`] = { epochs: [], losses: [], name: paramsGroups[i].experiment_name || `Exp ${i + 1}` };
       });
       refreshChart();
 
@@ -2014,6 +2087,8 @@
             <tr>
               <th class="px-3 py-2 text-left text-moon-dim font-normal">实验</th>
               <th class="px-3 py-2 text-right text-moon-dim font-normal">Final Loss</th>
+              <th class="px-3 py-2 text-right text-moon-dim font-normal">y_pred RMS</th>
+              <th class="px-3 py-2 text-right text-moon-dim font-normal">y_true RMS</th>
               <th class="px-3 py-2 text-right text-moon-dim font-normal">Epochs</th>
             </tr>
           </thead>
@@ -2022,6 +2097,8 @@
               <tr class="border-t border-titanium/20 hover:bg-void-800/50 transition-colors">
                 <td class="px-3 py-2 text-neon-cyan">${s.name}</td>
                 <td class="px-3 py-2 text-right font-medium">${s.final_loss !== null ? s.final_loss.toFixed(6) : 'N/A'}</td>
+                <td class="px-3 py-2 text-right text-moon-dim">${s.final_y_pred_norm !== undefined ? s.final_y_pred_norm.toFixed(4) : '-'}</td>
+                <td class="px-3 py-2 text-right text-moon-dim">${s.final_y_true_norm !== undefined ? s.final_y_true_norm.toFixed(4) : '-'}</td>
                 <td class="px-3 py-2 text-right text-moon-dim">${s.num_epochs}</td>
               </tr>
             `).join('')}

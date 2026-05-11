@@ -515,26 +515,48 @@ def generate_result_plots(
     # 模式 A: compare == True — 每个指标一张独立的 Figure
     # ================================================================
     if compare:
-        for _tup_idx, (metrics_list, x_type) in enumerate(result_lists):
+        for _tup_idx, tup in enumerate(result_lists):
+            metrics_list = tup[0]
+            x_type = tup[1]
+            baseline_index = tup[2] if len(tup) > 2 else None
             for metric in metrics_list:
                 fig, ax = plt.subplots(figsize=(10, 6))
                 fig.patch.set_facecolor(bg_color)
                 ax.set_facecolor("#0d0d1a")
+
+                # —— baseline 预处理 ——
+                baseline_name = None
+                baseline_data = None
+                if baseline_index is not None and 0 <= baseline_index < num_exp:
+                    baseline_name = table.init_parameters[baseline_index].get("experiment_name", f"Exp {baseline_index + 1}")
+                    if x_type == "epoch":
+                        baseline_flat = _flatten(results[baseline_index].get(metric, []))
+                        baseline_data = np.array(baseline_flat) if baseline_flat else None
+                    else:
+                        bv = results[baseline_index].get(metric, 0)
+                        baseline_data = float(bv) if not isinstance(bv, (list, np.ndarray)) else float(np.mean(bv)) if bv is not None else 0
 
                 if x_type == "epoch":
                     for i in range(num_exp):
                         name = table.init_parameters[i].get("experiment_name", f"Exp {i+1}")
                         flat = _flatten(results[i].get(metric, []))
                         if flat:
-                            ax.plot(flat, color=accent_colors[i % len(accent_colors)],
+                            y_data = np.array(flat)
+                            if baseline_data is not None:
+                                y_data = y_data - baseline_data
+                                if i == baseline_index:
+                                    name += " (Baseline)"
+                            ax.plot(y_data, color=accent_colors[i % len(accent_colors)],
                                     linewidth=1.8, label=name, alpha=0.9)
                     ax.set_xlabel("Epoch", color=text_color, fontsize=11)
                 elif x_type == "experiment":
                     values = []
                     for i in range(num_exp):
                         v = results[i].get(metric, 0)
-                        values.append(float(v) if not isinstance(v, (list, np.ndarray))
-                                      else float(np.mean(v)) if v is not None else 0)
+                        val = float(v) if not isinstance(v, (list, np.ndarray)) else float(np.mean(v)) if v is not None else 0
+                        if baseline_data is not None:
+                            val = val - baseline_data
+                        values.append(val)
                     exp_names = [table.init_parameters[i].get("experiment_name", f"Exp {i+1}")
                                  for i in range(num_exp)]
                     bars = ax.bar(range(num_exp), values,
@@ -548,7 +570,8 @@ def generate_result_plots(
                                 f"{val:.4f}", ha="center", va="bottom",
                                 color=text_color, fontsize=8)
 
-                ax.set_ylabel(metric, color=text_color, fontsize=10)
+                ylabel = f"{metric} (relative to {baseline_name})" if baseline_name else metric
+                ax.set_ylabel(ylabel, color=text_color, fontsize=10)
                 ax.set_title(f"{metric}  (x={x_type})", color=accent_colors[0],
                              fontsize=12, fontweight="bold")
                 if len(ax.get_legend_handles_labels()[0]) > 0:
@@ -570,7 +593,20 @@ def generate_result_plots(
     # 模式 B: compare == False — 每个 Tuple 一张 Figure，子图 + Twinx
     # ================================================================
     else:
-        for _tup_idx, (metrics_list, x_type) in enumerate(result_lists):
+        for _tup_idx, tup in enumerate(result_lists):
+            metrics_list = tup[0]
+            x_type = tup[1]
+            baseline_index = tup[2] if len(tup) > 2 else None
+
+            # —— baseline 预处理 ——
+            baseline_name = None
+            baseline_data_map = {}
+            if baseline_index is not None and 0 <= baseline_index < num_exp:
+                baseline_name = table.init_parameters[baseline_index].get("experiment_name", f"Exp {baseline_index + 1}")
+                for m in metrics_list:
+                    flat = _flatten(results[baseline_index].get(m, []))
+                    baseline_data_map[m] = np.array(flat) if flat else None
+
             cols = min(num_exp, 3)
             rows = (num_exp + cols - 1) // cols
             fig, axes = plt.subplots(rows, cols, figsize=(6 * cols, 5 * rows))
@@ -581,16 +617,22 @@ def generate_result_plots(
                 ax1 = axes_flat[i]
                 ax1.set_facecolor("#0d0d1a")
                 name = table.init_parameters[i].get("experiment_name", f"Exp {i+1}")
+                if baseline_name is not None and i == baseline_index:
+                    name += " (Baseline)"
 
                 # 左 Y 轴：metrics_list[0]
                 m0 = metrics_list[0]
                 flat0 = _flatten(results[i].get(m0, []))
                 if flat0:
+                    y_data = np.array(flat0)
+                    if baseline_name is not None and baseline_data_map.get(m0) is not None:
+                        y_data = y_data - baseline_data_map[m0]
                     color0 = accent_colors[i % len(accent_colors)]
-                    ax1.plot(flat0, color=color0, linewidth=1.8, label=m0, alpha=0.9)
+                    ax1.plot(y_data, color=color0, linewidth=1.8, label=m0, alpha=0.9)
                 ax1.set_xlabel("Epoch" if x_type == "epoch" else "Experiment",
                                color=text_color, fontsize=9)
-                ax1.set_ylabel(m0, color=accent_colors[0], fontsize=9)
+                ylabel0 = f"{m0} (rel to {baseline_name})" if baseline_name else m0
+                ax1.set_ylabel(ylabel0, color=accent_colors[0], fontsize=9)
                 ax1.tick_params(axis='y', labelcolor=accent_colors[0], labelsize=7)
                 ax1.tick_params(axis='x', colors=text_color, labelsize=7)
                 ax1.set_title(name, color=accent_colors[0], fontsize=10, fontweight="bold")
@@ -605,11 +647,16 @@ def generate_result_plots(
                     for j, mj in enumerate(metrics_list[1:], start=1):
                         flat_j = _flatten(results[i].get(mj, []))
                         if flat_j:
+                            y_data = np.array(flat_j)
+                            if baseline_name is not None and baseline_data_map.get(mj) is not None:
+                                y_data = y_data - baseline_data_map[mj]
                             c = accent_colors[(j + 1) % len(accent_colors)]
-                            ax2.plot(flat_j, color=c, linewidth=1.5,
+                            ax2.plot(y_data, color=c, linewidth=1.5,
                                      linestyle="--", label=mj, alpha=0.85)
-                    ax2.set_ylabel(" & ".join(metrics_list[1:]),
-                                   color=accent_colors[2], fontsize=8)
+                    ylabel2 = " & ".join(metrics_list[1:])
+                    if baseline_name:
+                        ylabel2 += f" (rel to {baseline_name})"
+                    ax2.set_ylabel(ylabel2, color=accent_colors[2], fontsize=8)
                     ax2.tick_params(axis='y', labelcolor=accent_colors[2], labelsize=7)
                     for spine in ax2.spines.values():
                         spine.set_color("#333")
@@ -767,6 +814,8 @@ async def get_results():
                 "index": i,
                 "name": name,
                 "final_loss": expr.get("loss_history", [None])[-1] if expr else None,
+                "final_y_pred_norm": expr.get("y_pred_norm_history", [None])[-1] if expr else None,
+                "final_y_true_norm": expr.get("y_true_norm_history", [None])[-1] if expr else None,
                 "num_epochs": len(expr.get("loss_history", [])) if expr else 0,
             })
             # 收集所有可用指标的完整数值
@@ -880,6 +929,7 @@ async def get_parameters():
                 "options": [
                     {"value": None, "label": "None (无调度器)"},
                     {"value": "cosine", "label": "Cosine Annealing"},
+                    {"value": "step", "label": "Step LR"},
                 ],
                 "default": None,
             },

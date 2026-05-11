@@ -61,7 +61,7 @@ class ExperimentTable:
                 else:
                     raise ValueError(f"Unknown parameter: {key}")
 
-    def run(self, result_lists: list[tuple[list[str], str]], modes=None, parallel_workers=1):
+    def run(self, result_lists: list[tuple[list[str], str, int]], modes=None, parallel_workers=1):
         """执行所有实验。
 
         根据 parallel_workers 决定串行或并行执行。并行模式下自动关闭日志输出
@@ -69,8 +69,10 @@ class ExperimentTable:
 
         Args:
             result_lists (list[tuple]): 要收集的数据指标。
-                格式：[(['指标1', '指标2'], '横轴类型'), ...]。
+                格式：[(['指标1', '指标2'], '横轴类型'), ...]
+                或 [(['指标1', '指标2'], '横轴类型', baseline_index), ...]
                 横轴类型 'epoch' 表示训练过程指标，'experiment' 表示汇总指标。
+                baseline_index 可选，表示用于计算相对值的基线实验索引。
             modes (list[str] or None): 运行模式，['train'] 和/或 ['evaluate']。
                 默认 ['train']。
             parallel_workers (int): 并行线程数。1 为串行，>1 为多线程并行。
@@ -80,7 +82,7 @@ class ExperimentTable:
         """
         if modes is None:
             modes = ['train']
-        result_set = set().union(*[result_list for result_list, _ in result_lists])
+        result_set = set().union(*[item[0] for item in result_lists])
         self.result_lists = result_lists
         self.results_groups = {
             'train': [None] * self.num_experiments,
@@ -90,13 +92,18 @@ class ExperimentTable:
         print_lock = threading.Lock()
         vram_printed = False
 
-        def run_single_experiment(i, parallel=False):
+        for i in range(self.num_experiments):
+            experiment = LoopedTransformerExperiment(**self.init_parameters[i])
+            experiment.offload_to_cpu()
+            self.experiments[i] = experiment
+
+        def single_train(i, parallel=False):
             nonlocal vram_printed
+            experiment = self.experiments[i]
+            experiment.load_to_device()
             if parallel:
-                self.init_parameters[i]['timing'] = False
                 self.train_parameters[i]['timing'] = False
                 self.train_parameters[i]['print_every'] = None
-            experiment = LoopedTransformerExperiment(**self.init_parameters[i])
             if parallel:
                 with print_lock:
                     if not vram_printed:
@@ -108,6 +115,17 @@ class ExperimentTable:
                 if mode == 'train':
                     experiment.train(**self.train_parameters[i])
                     self.results_groups['train'][i] = experiment.get_results(result_set)
+                    if parallel:
+                        with print_lock:
+                            print_vram_usage(
+                                tag=f"Experiment {i+1} 训练峰值",
+                                peak=(experiment.max_torch_vram, experiment.max_metal_vram),
+                            )
+                    else:
+                        print_vram_usage(
+                            tag=f"Experiment {i+1} 训练峰值",
+                            peak=(experiment.max_torch_vram, experiment.max_metal_vram),
+                        )
                 elif mode == 'evaluate':
                     eval_parameters = {
                         k: v for k, v in self.train_parameters[i].items()
@@ -117,7 +135,6 @@ class ExperimentTable:
                         eval_parameters['loss_type'] = self.init_parameters[i]['loss_type']
                     self.results_groups['evaluate'][i] = experiment.evaluate(**eval_parameters)
             experiment.offload_to_cpu()
-            self.experiments[i] = experiment
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             if torch.backends.mps.is_available():
@@ -129,11 +146,11 @@ class ExperimentTable:
         print_vram_usage(tag="本底显存检测")
         if parallel_workers == 1:
             for i in range(self.num_experiments):
-                run_single_experiment(i, parallel=False)
+                single_train(i, parallel=False)
         elif isinstance(parallel_workers, int) and parallel_workers > 1:
             print(f"Running {self.num_experiments} experiments in parallel with {parallel_workers} workers...")
             with concurrent.futures.ThreadPoolExecutor(max_workers=parallel_workers) as executor:
-                executor.map(lambda i: run_single_experiment(i, parallel=True), range(self.num_experiments))
+                executor.map(lambda i: single_train(i, parallel=True), range(self.num_experiments))
         else:
             raise ValueError("parallel_workers must be a positive integer.")
 
@@ -195,41 +212,75 @@ class ExperimentTable:
             fig, axs = plt.subplots(*subplot_shape, figsize=figure_size)
             axs_flat = np.atleast_1d(axs).flatten()
             index = 0
-            for result_list, x in self.result_lists:
+            for item in self.result_lists:
+                result_list = item[0]
+                x = item[1]
+                baseline_index = item[2] if len(item) > 2 else None
                 if x == 'epoch':
                     if compare_experiments:
                         for metric in result_list:
+                            baseline_name = None
+                            if baseline_index is not None and 0 <= baseline_index < self.num_experiments:
+                                baseline_name = self.init_parameters[baseline_index].get('experiment_name', f'Experiment {baseline_index + 1}')
+                                baseline_data = np.array(results[baseline_index][metric])
                             for i in range(self.num_experiments):
                                 exp_name = self.init_parameters[i].get('experiment_name', f'Experiment {i+1}')
-                                axs_flat[index].plot(results[i][metric], label=exp_name, color=colors[i % len(colors)])
+                                y_data = np.array(results[i][metric])
+                                if baseline_name is not None:
+                                    y_data = y_data - baseline_data
+                                    if i == baseline_index:
+                                        exp_name += ' (Baseline)'
+                                axs_flat[index].plot(y_data, label=exp_name, color=colors[i % len(colors)])
                             axs_flat[index].set_xlabel('Epoch')
-                            axs_flat[index].set_ylabel(metric)
+                            if baseline_name is not None:
+                                axs_flat[index].set_ylabel(f"{metric} (relative to {baseline_name})")
+                            else:
+                                axs_flat[index].set_ylabel(metric)
                             axs_flat[index].tick_params(axis='y')
                             axs_flat[index].set_title('Comparison of ' + metric)
                             axs_flat[index].legend(loc='upper right')
                             axs_flat[index].grid(True)
                             index += 1
                     else:
+                        if baseline_index is not None and 0 <= baseline_index < self.num_experiments:
+                            baseline_name = self.init_parameters[baseline_index].get('experiment_name', f'Experiment {baseline_index + 1}')
+                            baseline_data = np.array(results[baseline_index][result_list[0]])
                         for i in range(self.num_experiments):
                             color_index = 0
+                            y_data = np.array(results[i][result_list[0]])
+                            if baseline_index is not None and 0 <= baseline_index < self.num_experiments:
+                                baseline_name = self.init_parameters[baseline_index].get('experiment_name', f'Experiment {baseline_index + 1}')
+                                y_data = y_data - baseline_data
+                                if i == baseline_index:
+                                    exp_name_extra = ' (Baseline)'
                             axs_flat[index].plot(
-                                results[i][result_list[0]], label=result_list[0],
+                                y_data, label=result_list[0],
                                 color=colors[color_index % len(colors)],
                             )
                             axs_flat[index].set_xlabel('Epoch')
-                            axs_flat[index].set_ylabel(result_list[0], color=colors[color_index % len(colors)])
+                            if baseline_index is not None and 0 <= baseline_index < self.num_experiments:
+                                axs_flat[index].set_ylabel(f"{result_list[0]} (relative to {baseline_name})", color=colors[color_index % len(colors)])
+                            else:
+                                axs_flat[index].set_ylabel(result_list[0], color=colors[color_index % len(colors)])
                             axs_flat[index].tick_params(axis='y', labelcolor=colors[color_index % len(colors)])
                             color_index += 1
                             if len(result_list) > 1:
                                 ax_twin = axs_flat[index].twinx()
                                 primary_color = colors[color_index % len(colors)]
                                 for j in range(1, len(result_list)):
+                                    y_data = np.array(results[i][result_list[j]])
+                                    if baseline_index is not None and 0 <= baseline_index < self.num_experiments:
+                                        baseline_data_j = np.array(results[baseline_index][result_list[j]])
+                                        y_data = y_data - baseline_data_j
                                     ax_twin.plot(
-                                        results[i][result_list[j]], label=result_list[j],
+                                        y_data, label=result_list[j],
                                         color=colors[color_index % len(colors)],
                                     )
                                     color_index += 1
-                                ax_twin.set_ylabel(' and '.join(result_list[1:]), color=primary_color)
+                                if baseline_index is not None and 0 <= baseline_index < self.num_experiments:
+                                    ax_twin.set_ylabel(' and '.join(result_list[1:]) + f' (relative to {baseline_name})', color=primary_color)
+                                else:
+                                    ax_twin.set_ylabel(' and '.join(result_list[1:]), color=primary_color)
                                 ax_twin.tick_params(axis='y', labelcolor=primary_color)
                                 ax_twin.legend(loc='upper right')
                             axs_flat[index].set_title(
