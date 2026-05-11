@@ -216,10 +216,10 @@ class ExperimentTable:
                 result_list = item[0]
                 x = item[1]
                 baseline_index = item[2] if len(item) > 2 else None
+                baseline_name = None
                 if x == 'epoch':
                     if compare_experiments:
                         for metric in result_list:
-                            baseline_name = None
                             if baseline_index is not None and 0 <= baseline_index < self.num_experiments:
                                 baseline_name = self.init_parameters[baseline_index].get('experiment_name', f'Experiment {baseline_index + 1}')
                                 baseline_data = np.array(results[baseline_index][metric])

@@ -195,7 +195,7 @@ table = ExperimentTable(params_groups=[
     {'pe_type': ['rope'],        'experiment_name': 'RoPE'},
     {'pe_type': ['ms_upe'],      'experiment_name': 'MS-UPE'},
 ])
-table.run(result_lists=[(['loss_history'], 'epoch')], parallel_workers=2)
+table.run(result_lists=[(['loss_history'], 'epoch')])
 table.plot(figure_size=(8, 6))
 ```
 
@@ -352,6 +352,7 @@ table.plot(figure_size=(8, 6))
 | `loss_history` | `list[float]` | 每个 epoch 的 MSE 损失 |
 | `y_pred_norm_history` | `list[float]` | 每个 epoch 的预测值 RMS 范数 |
 | `y_true_norm_history` | `list[float]` | 每个 epoch 的真实值 RMS 范数 |
+| `y_norm_error_history` | `list[float]` | 每个 epoch 的预测值范数与真实值范数之差 |
 | `residual_gate_history_a` | `list[float]` | 每个 epoch 的门控 a 值（仅标量模式） |
 | `residual_gate_history_b` | `list[float]` | 每个 epoch 的门控 b 值（仅标量模式） |
 | `residual_gate_history_a_relative` | `list[float]` | 门控 a 值相对初始值的变化量 |

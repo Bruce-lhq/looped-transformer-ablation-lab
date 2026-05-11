@@ -251,6 +251,7 @@ class LoopedTransformerExperiment:
             'loss_history': self.loss_history,
             'y_pred_norm_history': self.y_pred_norm_history,
             'y_true_norm_history': self.y_true_norm_history,
+            'y_norm_error_history': [pred - true for pred, true in zip(self.y_pred_norm_history, self.y_true_norm_history)],
             'final_loss': self.final_loss,
             'final_y_pred_norm': self.y_pred_norm_history[-1] if self.y_pred_norm_history else None,
             'final_y_true_norm': self.y_true_norm_history[-1] if self.y_true_norm_history else None,
@@ -268,8 +269,15 @@ class LoopedTransformerExperiment:
                 all_results['residual_gate_history_b_relative'] = [
                     gate[1] - self.residual_gate_history[0][1] for gate in self.residual_gate_history
                 ]
+                # 标量门控的 _mean 就是自身，便于与向量门控混合绘图
+                all_results['residual_gate_history_a_mean'] = all_results['residual_gate_history_a']
+                all_results['residual_gate_history_b_mean'] = all_results['residual_gate_history_b']
+                all_results['residual_gate_history_a_mean_relative'] = all_results['residual_gate_history_a_relative']
+                all_results['residual_gate_history_b_mean_relative'] = all_results['residual_gate_history_b_relative']
                 all_results['final_residual_gate_a'] = self.residual_gate_values[0]
                 all_results['final_residual_gate_b'] = self.residual_gate_values[1]
+                all_results['final_residual_gate_a_mean'] = all_results['final_residual_gate_a']
+                all_results['final_residual_gate_b_mean'] = all_results['final_residual_gate_b']
             elif len(self.residual_gate_values.shape) == 2:
                 all_results['residual_gate_history_a_mean'] = [gate[:, 0].mean() for gate in self.residual_gate_history]
                 all_results['residual_gate_history_b_mean'] = [gate[:, 1].mean() for gate in self.residual_gate_history]
