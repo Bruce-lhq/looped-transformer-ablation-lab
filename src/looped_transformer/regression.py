@@ -69,22 +69,24 @@ class PredictionLoss(nn.Module):
         weight_decay (float): 权重衰减系数（预留，当前未直接使用）。
     """
 
-    def __init__(self, d_model, d_y=1, loss_type='mse', weight_decay=1.0):
+    def __init__(self, d_model, d_y=1, loss_type='mse', layer_weight_decay=1.0, seq_weight_decay=1.0):
         """初始化 PredictionLoss。
 
         Args:
             d_model (int): 输入维度。
             d_y (int): 输出维度，默认 1。
             loss_type (str): 损失类型，'mse' 或 'l1'。
-            weight_decay (float): 权重衰减系数。
+            layer_weight_decay (float): 层衰减系数，后续层权重更大。
+            seq_weight_decay (float): 序列位置衰减系数，后面位置权重更大。
         """
         super().__init__()
         self.read_out = nn.Linear(d_model, d_y)
-        self.weight_decay = weight_decay
+        self.layer_weight_decay = layer_weight_decay
+        self.seq_weight_decay = seq_weight_decay
         if loss_type == 'mse':
-            self.loss_fn = nn.MSELoss()
+            self.loss_fn = nn.MSELoss(reduction='none')
         elif loss_type == 'l1':
-            self.loss_fn = nn.L1Loss()
+            self.loss_fn = nn.L1Loss(reduction='none')
 
     def forward(self, outputs, y_true, is_eval=False, sink_padding=None):
         """计算损失或返回预测值。
@@ -98,7 +100,7 @@ class PredictionLoss(nn.Module):
                 跳过前 sink_padding 个位置。
 
         Returns:
-            torch.Tensor: 训练模式返回各层平均损失；
+            训练模式返回 (loss, y_pred_norm, y_true_norm) 三元组；
                 评估模式返回最终预测 [batch_size, d_y]。
         """
         if is_eval:
@@ -110,8 +112,20 @@ class PredictionLoss(nn.Module):
         if sink_padding is not None:
             y_preds = y_preds[:, :, sink_padding:, :]
             y_true = y_true[:, sink_padding:, :]
-        loss = self.loss_fn(y_preds, y_true.unsqueeze(1).expand_as(y_preds))
-        return loss
+        y_pred_norm = torch.sqrt(torch.mean(y_preds.detach() ** 2)).item()
+        y_true_norm = torch.sqrt(torch.mean(y_true.detach() ** 2)).item()
+        loss_unreduced = self.loss_fn(y_preds, y_true.unsqueeze(1).expand_as(y_preds))
+        if self.layer_weight_decay != 1.0:
+            num_eff = outputs.shape[1]
+            layer_weights = self.layer_weight_decay ** torch.arange(num_eff - 1, -1, -1, device=outputs.device)
+            layer_weights = layer_weights / layer_weights.mean()
+            loss_unreduced = loss_unreduced * layer_weights.view(1, num_eff, 1, 1)
+        if self.seq_weight_decay != 1.0:
+            k = loss_unreduced.shape[2]
+            seq_weights = self.seq_weight_decay ** torch.arange(k - 1, -1, -1, device=outputs.device)
+            seq_weights = seq_weights / seq_weights.mean()
+            loss_unreduced = loss_unreduced * seq_weights.view(1, 1, k, 1)
+        return loss_unreduced.mean(), y_pred_norm, y_true_norm
 
 
 class RegressionSolver(nn.Module):
@@ -132,7 +146,8 @@ class RegressionSolver(nn.Module):
                  loop=True, loss_type='mse',
                  residual_gate=(1, 1), residual_gate_type='fixed',
                  residual_random=(1, 0.1),
-                 bias=False, init_scale=None):
+                 bias=False, init_scale=None,
+                 layer_weight_decay=1.0, seq_weight_decay=1.0):
         """初始化 RegressionSolver。
 
         Args:
@@ -154,6 +169,8 @@ class RegressionSolver(nn.Module):
             residual_random (tuple): 随机初始化的 (mean, std)。
             bias (bool): RegressionHead 是否使用偏置。
             init_scale (float or None): RegressionHead 初始化标准差。
+            layer_weight_decay (float): 层衰减系数。
+            seq_weight_decay (float): 序列位置衰减系数。
         """
         super().__init__()
         self.toy_model = ToyModel(
@@ -164,7 +181,9 @@ class RegressionSolver(nn.Module):
             residual_random=residual_random,
         )
         self.head = RegressionHead(d_model, d_x, d_y, bias=bias, init_scale=init_scale)
-        self.loss_fn = PredictionLoss(d_model, d_y, loss_type=loss_type)
+        self.loss_fn = PredictionLoss(d_model, d_y, loss_type=loss_type,
+                                      layer_weight_decay=layer_weight_decay,
+                                      seq_weight_decay=seq_weight_decay)
 
     def forward(self, x_data, y_data, num_eff, current_blocks=None, is_eval=False, sink_padding=None):
         """前向传播：完整的数据 → 预测 → 损失流程。
@@ -178,7 +197,8 @@ class RegressionSolver(nn.Module):
             sink_padding (int or None): sink token 组数。
 
         Returns:
-            torch.Tensor: 损失值或预测值（取决于 is_eval）。
+            评估模式: 预测值 [batch_size, d_y]。
+            训练模式: (loss, y_pred_norm, y_true_norm) 三元组。
         """
         Prompt = self.head(x_data, y_data)
         outputs = self.toy_model(Prompt, num_eff, current_blocks=current_blocks)

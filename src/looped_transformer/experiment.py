@@ -31,7 +31,7 @@ class LoopedTransformerExperiment:
                  seed=None, experiment_name='Experiment',
                  norm_type='layernorm', ffn_type='gelu', pe_type='learned_ape',
                  b_rope_or_upe=10000, head_ratio_upe=2,
-                 optimizer_type='adam',
+                 optimizer_type='adam', wd_adamw=0.01,
                  loop=True, loss_type='mse', bias=False, init_scale=None,
                  residual_gate=(1, 1), residual_gate_type='fixed', residual_random=(1, 0.1),
                  task='regression', timing=True):
@@ -56,6 +56,7 @@ class LoopedTransformerExperiment:
             b_rope_or_upe (int): RoPE/MS_UPE 基频。
             head_ratio_upe (int): MS_UPE 头倍率。
             optimizer_type (str): 优化器类型，'adam'、'sgd' 或 'adamw'。
+            wd_adamw (float): AdamW 优化器的权重衰减系数。
             loop (bool): 是否权重共享。
             loss_type (str): 损失函数，'mse' 或 'l1'。
             bias (bool): RegressionHead 是否使用偏置。
@@ -75,8 +76,10 @@ class LoopedTransformerExperiment:
         else:
             self.device = torch.device("cpu")
         self.is_offloaded = False
+        self.generator = torch.Generator(device=self.device)
         if seed is not None:
             torch.manual_seed(seed)
+            self.generator.manual_seed(seed)
         self.task = task
         if task == 'regression':
             self.model = RegressionSolver(
@@ -104,7 +107,7 @@ class LoopedTransformerExperiment:
         elif optimizer_type == 'sgd':
             self.optimizer = torch.optim.SGD(param_groups, lr=lr)
         elif optimizer_type == 'adamw':
-            self.optimizer = torch.optim.AdamW(param_groups, lr=lr)
+            self.optimizer = torch.optim.AdamW(param_groups, lr=lr, weight_decay=wd_adamw)
         self.d_x = d_x
         self.d_y = d_y
         self.num_blocks = num_blocks
@@ -118,10 +121,11 @@ class LoopedTransformerExperiment:
 
     def train(self, batch_size=64, seq_len=80, epochs=20, data_type='linear',
               num_eff=15, sink_padding=None, scheduled_training=True, scheduler_type=None,
+              lr_scale=0.1, step_size_scheduler=10,
               print_every=None, timing=False):
         """执行训练循环。
 
-        支持渐进式增加有效层数（scheduled_training）和余弦学习率调度。
+        支持渐进式增加有效层数（scheduled_training）和余弦/StepLR 学习率调度。
 
         Args:
             batch_size (int): 批次大小，默认 64。
@@ -131,20 +135,33 @@ class LoopedTransformerExperiment:
             num_eff (int): 有效层数 T，实际取 min(num_eff, num_blocks)。
             sink_padding (int or None): sink token 组数。
             scheduled_training (bool): True 时 current_blocks 从 num_eff 增长到 num_blocks。
-            scheduler_type (str or None): LR 调度器，'cosine' 或 None。
+            scheduler_type (str or None): LR 调度器，'cosine'、'step' 或 None。
+            lr_scale (float): LR 调度器的缩放因子（cosine的eta_min / StepLR的gamma）。
+            step_size_scheduler (int): StepLR 调度器的步长。
             print_every (int or None): 每隔几个 epoch 打印一次日志。
             timing (bool): 是否打印训练耗时。
         """
         self.model.train()
+        self.max_torch_vram = 0
+        self.max_metal_vram = 0
         self.train_time = None
         self.data_loader = dataloader(
             batch_size, seq_len, self.d_x, self.d_y, device=self.device,
-            data_type=data_type, sink_padding=sink_padding,
+            data_type=data_type, sink_padding=sink_padding, generator=self.generator,
         )
         self.loss_history = []
+        self.y_pred_norm_history = []
+        self.y_true_norm_history = []
         self.residual_gate_history = []
         if scheduler_type == 'cosine':
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=epochs)
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                self.optimizer, T_max=epochs,
+                eta_min=lr_scale * self.optimizer.param_groups[0]['lr'],
+            )
+        elif scheduler_type == 'step':
+            scheduler = torch.optim.lr_scheduler.StepLR(
+                self.optimizer, step_size=step_size_scheduler, gamma=lr_scale,
+            )
         num_eff = min(num_eff, self.num_blocks)
         if timing:
             start_time = time.time()
@@ -155,15 +172,20 @@ class LoopedTransformerExperiment:
                 current_blocks = min(num_eff + epoch, self.num_blocks)
             else:
                 current_blocks = self.num_blocks
-            loss = self.model(
+            loss, y_pred_norm, y_true_norm = self.model(
                 x_data, y_data, num_eff=num_eff, current_blocks=current_blocks,
                 is_eval=False, sink_padding=sink_padding,
             )
             loss = loss.mean()
             loss.backward()
+            if torch.backends.mps.is_available():
+                self.max_metal_vram = max(self.max_metal_vram, torch.mps.driver_allocated_memory() / (1024 ** 3))
+                self.max_torch_vram = max(self.max_torch_vram, torch.mps.current_allocated_memory() / (1024 ** 3))
             self.optimizer.step()
             if scheduler_type is not None:
                 scheduler.step()
+            self.y_pred_norm_history.append(y_pred_norm)
+            self.y_true_norm_history.append(y_true_norm)
             self.loss_history.append(loss.item())
             self.residual_gate_history.append(
                 self.model.toy_model.residual_gate.detach().cpu().numpy()
@@ -196,7 +218,7 @@ class LoopedTransformerExperiment:
         with torch.no_grad():
             x_eval, y_eval = next(dataloader(
                 batch_size, seq_len + 1, self.d_x, self.d_y, device=self.device,
-                data_type=data_type, sink_padding=sink_padding,
+                data_type=data_type, sink_padding=sink_padding, generator=self.generator,
             ))
             y_pred = self.model(
                 x_eval, y_eval, num_eff=self.num_blocks,
@@ -227,7 +249,12 @@ class LoopedTransformerExperiment:
             'init_time': self.init_time,
             'train_time': self.train_time,
             'loss_history': self.loss_history,
+            'y_pred_norm_history': self.y_pred_norm_history,
+            'y_true_norm_history': self.y_true_norm_history,
+            'y_norm_error_history': [pred - true for pred, true in zip(self.y_pred_norm_history, self.y_true_norm_history)],
             'final_loss': self.final_loss,
+            'final_y_pred_norm': self.y_pred_norm_history[-1] if self.y_pred_norm_history else None,
+            'final_y_true_norm': self.y_true_norm_history[-1] if self.y_true_norm_history else None,
             'residual_gate_history': self.residual_gate_history,
             'final_residual_gate': self.residual_gate_values,
             'captured_attention': self.model.toy_model.captured_attention,
@@ -242,8 +269,15 @@ class LoopedTransformerExperiment:
                 all_results['residual_gate_history_b_relative'] = [
                     gate[1] - self.residual_gate_history[0][1] for gate in self.residual_gate_history
                 ]
+                # 标量门控的 _mean 就是自身，便于与向量门控混合绘图
+                all_results['residual_gate_history_a_mean'] = all_results['residual_gate_history_a']
+                all_results['residual_gate_history_b_mean'] = all_results['residual_gate_history_b']
+                all_results['residual_gate_history_a_mean_relative'] = all_results['residual_gate_history_a_relative']
+                all_results['residual_gate_history_b_mean_relative'] = all_results['residual_gate_history_b_relative']
                 all_results['final_residual_gate_a'] = self.residual_gate_values[0]
                 all_results['final_residual_gate_b'] = self.residual_gate_values[1]
+                all_results['final_residual_gate_a_mean'] = all_results['final_residual_gate_a']
+                all_results['final_residual_gate_b_mean'] = all_results['final_residual_gate_b']
             elif len(self.residual_gate_values.shape) == 2:
                 all_results['residual_gate_history_a_mean'] = [gate[:, 0].mean() for gate in self.residual_gate_history]
                 all_results['residual_gate_history_b_mean'] = [gate[:, 1].mean() for gate in self.residual_gate_history]
@@ -292,23 +326,29 @@ class LoopedTransformerExperiment:
         self.is_offloaded = False
 
 
-def print_vram_usage(tag=""):
+def print_vram_usage(tag="", peak=None):
     """打印当前设备的显存/内存占用情况。
 
     自动适配 MPS (Apple Silicon)、CUDA (NVIDIA) 和 CPU 三种后端。
 
     Args:
         tag (str): 日志标签，用于区分不同阶段的显存打印。
+        peak (tuple or None): (torch_peak, metal_peak) 峰值显存，
+            传入时显示峰值而非当前值。
     """
     if torch.backends.mps.is_available():
-        allocated = torch.mps.current_allocated_memory() / (1024 ** 3)
-        driver_alloc = torch.mps.driver_allocated_memory() / (1024 ** 3)
-        print(f"[{tag}] 显存占用 -> PyTorch分配: {allocated:.2f} GB | Metal驱动分配: {driver_alloc:.2f} GB")
+        if peak is not None:
+            print(f"[{tag}] 显存占用 -> PyTorch分配: {peak[0]:.2f} GB | Metal驱动分配: {peak[1]:.2f} GB")
+        else:
+            allocated = torch.mps.current_allocated_memory() / (1024 ** 3)
+            driver_alloc = torch.mps.driver_allocated_memory() / (1024 ** 3)
+            print(f"[{tag}] 显存占用 -> PyTorch分配: {allocated:.2f} GB | Metal驱动分配: {driver_alloc:.2f} GB")
     elif torch.cuda.is_available():
         allocated = torch.cuda.memory_allocated() / (1024 ** 3)
+        peak_cuda = torch.cuda.max_memory_allocated() / (1024 ** 3)
         reserved = torch.cuda.memory_reserved() / (1024 ** 3)
         total = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
         free = total - reserved
-        print(f"[{tag}] 显存占用 -> 已分配: {allocated:.2f} GB | 缓存池: {reserved:.2f} GB | 剩余可用: {free:.2f} GB")
+        print(f"[{tag}] 显存占用 -> 已分配: {allocated:.2f} GB | 峰值: {peak_cuda:.2f} GB | 缓存池: {reserved:.2f} GB | 剩余可用: {free:.2f} GB")
     else:
         print(f"[{tag}] 当前运行在 CPU，占用主板内存。")

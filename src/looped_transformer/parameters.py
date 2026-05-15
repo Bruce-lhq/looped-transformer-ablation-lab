@@ -53,7 +53,8 @@ def default_setup(manual=None):
         'seed': 42,                        # int or None: 随机种子
         'experiment_name': 'Experiment',   # str or None: 实验名称
         'timing': True,                    # bool: 是否打印初始化时间
-        'optimizer_type': 'adam',          # str: 优化器类型 ('adam' 或 'sgd'或 'adamw')
+        'optimizer_type': 'adam',          # str: 优化器类型 ('adam' 或 'sgd' 或 'adamw')
+        'wd_adamw': 0.01,                  # float: AdamW优化器的权重衰减系数，仅当optimizer_type='adamw'时有效
         'task': 'regression',              # str: 任务类型 ('regression')
     }
 
@@ -71,7 +72,9 @@ def default_setup(manual=None):
     # LoopedTransformerExperiment
         'epochs': 20,                      # int: 训练轮数
         'data_type': 'linear',             # str: 回归数据类型 ('linear')
-        'scheduler_type': None,            # str or None: 学习率调节器类型 ('cosine' 或 None)
+        'scheduler_type': None,            # str or None: 学习率调节器类型 ('cosine' 或 'step' 或 None)
+        'lr_scale': 0.1,                   # float: 学习率调节器的缩放因子，仅当scheduler_type不为None时有效
+        'step_size_scheduler': 10,         # int: StepLR调度器的步长，仅当scheduler_type='step'时有效
         'scheduled_training': True,        # bool: 是否渐进增加参与层数
         'print_every': 5,                  # int or None: 打印频率/epoch
         'timing': True,                    # bool: 是否打印训练时间

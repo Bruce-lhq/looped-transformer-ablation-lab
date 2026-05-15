@@ -195,7 +195,7 @@ table = ExperimentTable(params_groups=[
     {'pe_type': ['rope'],        'experiment_name': 'RoPE'},
     {'pe_type': ['ms_upe'],      'experiment_name': 'MS-UPE'},
 ])
-table.run(result_lists=[(['loss_history'], 'epoch')], parallel_workers=2)
+table.run(result_lists=[(['loss_history'], 'epoch')])
 table.plot(figure_size=(8, 6))
 ```
 
@@ -304,6 +304,7 @@ table.plot(figure_size=(8, 6))
 | `experiment_name` | `str` 或 `None` | `'Experiment'` | 实验名称，同时用作绑图时的图例名（`None` 表示不打印设备和实验初始化信息） |
 | `timing` | `bool` | `True` | 是否打印初始化时间 |
 | `optimizer_type` | `str` | `'adam'` | 优化器类型：`'adam'`、`'sgd'` 或 `'adamw'` |
+| `wd_adamw` | `float` | `0.01` | AdamW 优化器的权重衰减系数，仅当 `optimizer_type='adamw'` 时有效 |
 | `task` | `str` | `'regression'` | 任务类型（目前仅 `'regression'`） |
 
 ##### 训练参数 (`train_parameters`)
@@ -333,7 +334,9 @@ table.plot(figure_size=(8, 6))
 |-----|------|--------|------|
 | `epochs` | `int` | `20` | 训练轮数 |
 | `data_type` | `str` | `'linear'` | 回归数据类型（目前仅 `'linear'`） |
-| `scheduler_type` | `str` 或 `None` | `None` | 学习率调节器类型：`'cosine'` 或 `None` |
+| `scheduler_type` | `str` 或 `None` | `None` | 学习率调节器类型：`'cosine'`、`'step'` 或 `None` |
+| `lr_scale` | `float` | `0.1` | 学习率调节器的缩放因子（cosine 的 `eta_min` / StepLR 的 `gamma`），仅当 `scheduler_type` 不为 `None` 时有效 |
+| `step_size_scheduler` | `int` | `10` | StepLR 调度器的步长，仅当 `scheduler_type='step'` 时有效 |
 | `scheduled_training` | `bool` | `True` | 是否使用计划训练，即随着训练进行逐渐增加参与层数 `b = epoch + num_eff`，直到达到 `num_blocks` |
 | `print_every` | `int` 或 `None` | `5` | 打印频率（每 N 个 epoch 打印一次；`None` 表示不打印） |
 | `timing` | `bool` | `True` | 是否打印训练时间 |
@@ -347,6 +350,9 @@ table.plot(figure_size=(8, 6))
 | 指标 Key | 类型 | 说明 |
 |----------|------|------|
 | `loss_history` | `list[float]` | 每个 epoch 的 MSE 损失 |
+| `y_pred_norm_history` | `list[float]` | 每个 epoch 的预测值 RMS 范数 |
+| `y_true_norm_history` | `list[float]` | 每个 epoch 的真实值 RMS 范数 |
+| `y_norm_error_history` | `list[float]` | 每个 epoch 的预测值范数与真实值范数之差 |
 | `residual_gate_history_a` | `list[float]` | 每个 epoch 的门控 a 值（仅标量模式） |
 | `residual_gate_history_b` | `list[float]` | 每个 epoch 的门控 b 值（仅标量模式） |
 | `residual_gate_history_a_relative` | `list[float]` | 门控 a 值相对初始值的变化量 |
@@ -363,6 +369,8 @@ table.plot(figure_size=(8, 6))
 | 指标 Key | 类型 | 说明 |
 |----------|------|------|
 | `final_loss` | `float` | 最终 epoch 的损失值 |
+| `final_y_pred_norm` | `float` | 最终 epoch 的预测值 RMS 范数 |
+| `final_y_true_norm` | `float` | 最终 epoch 的真实值 RMS 范数 |
 | `final_residual_gate_a` | `float` | 最终门控 a 值（标量模式） |
 | `final_residual_gate_b` | `float` | 最终门控 b 值（标量模式） |
 | `final_residual_gate_a_mean` | `float` | 最终门控 a 向量均值（向量模式） |
@@ -407,9 +415,11 @@ my_params = [
 
 ```python
 # 模板：[ ( [Y轴指标列表], '横轴类型' ), ... ]
+#   或    [ ( [Y轴指标列表], '横轴类型', baseline_index ), ... ]
 #   最外层 []     = 你要画的所有图
-#   第二层 ()     = 每张图的配置（元组），只有两个元素：(Y轴, X轴)
+#   第二层 ()     = 每张图的配置（元组），两个或三个元素：(Y轴, X轴[, 基线索引])
 #   第三层 []     = Y 轴要画的具体指标名（必须是列表）
+#   baseline_index = 可选，指定用作基线的实验索引（0-based），画图时显示相对差值
 
 my_plots = [
     # 第 1 张图：画 Loss 曲线
@@ -417,6 +427,9 @@ my_plots = [
 
     # 第 2 张图：画残差门控 a 和 b 的变化（两条线在同一张图里）
     ( ['residual_gate_history_a', 'residual_gate_history_b'], 'epoch' ),
+
+    # 第 3 张图：以第 0 个实验为基线，画相对 loss 变化
+    ( ['loss_history'], 'epoch', 0 ),
 ]
 
 # 执行：
