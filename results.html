@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>Looped Transformer &#x5b9e;&#x9a8c;&#x8fdb;&#x5c55;&#x62a5;&#x544a;</title>
+            <style>
+/* From extension vscode.github */
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.vscode-dark img[src$=\#gh-light-mode-only],
+.vscode-light img[src$=\#gh-dark-mode-only],
+.vscode-high-contrast:not(.vscode-high-contrast-light) img[src$=\#gh-light-mode-only],
+.vscode-high-contrast-light img[src$=\#gh-dark-mode-only] {
+	display: none;
+}
+
+</style>
+            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex/dist/katex.min.css">
+<link href="https://cdn.jsdelivr.net/npm/katex-copytex@latest/dist/katex-copytex.min.css" rel="stylesheet" type="text/css">
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/Microsoft/vscode/extensions/markdown-language-features/media/markdown.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/Microsoft/vscode/extensions/markdown-language-features/media/highlight.css">
+<style>
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', system-ui, 'Ubuntu', 'Droid Sans', sans-serif;
+                font-size: 14px;
+                line-height: 1.6;
+            }
+        </style>
+        <style>
+.task-list-item {
+    list-style-type: none;
+}
+
+.task-list-item-checkbox {
+    margin-left: -20px;
+    vertical-align: middle;
+    pointer-events: none;
+}
+</style>
+<style>
+:root {
+  --color-note: #0969da;
+  --color-tip: #1a7f37;
+  --color-warning: #9a6700;
+  --color-severe: #bc4c00;
+  --color-caution: #d1242f;
+  --color-important: #8250df;
+}
+
+</style>
+<style>
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-note: #2f81f7;
+    --color-tip: #3fb950;
+    --color-warning: #d29922;
+    --color-severe: #db6d28;
+    --color-caution: #f85149;
+    --color-important: #a371f7;
+  }
+}
+
+</style>
+<style>
+.markdown-alert {
+  padding: 0.5rem 1rem;
+  margin-bottom: 16px;
+  color: inherit;
+  border-left: .25em solid #888;
+}
+
+.markdown-alert>:first-child {
+  margin-top: 0
+}
+
+.markdown-alert>:last-child {
+  margin-bottom: 0
+}
+
+.markdown-alert .markdown-alert-title {
+  display: flex;
+  font-weight: 500;
+  align-items: center;
+  line-height: 1
+}
+
+.markdown-alert .markdown-alert-title .octicon {
+  margin-right: 0.5rem;
+  display: inline-block;
+  overflow: visible !important;
+  vertical-align: text-bottom;
+  fill: currentColor;
+}
+
+.markdown-alert.markdown-alert-note {
+  border-left-color: var(--color-note);
+}
+
+.markdown-alert.markdown-alert-note .markdown-alert-title {
+  color: var(--color-note);
+}
+
+.markdown-alert.markdown-alert-important {
+  border-left-color: var(--color-important);
+}
+
+.markdown-alert.markdown-alert-important .markdown-alert-title {
+  color: var(--color-important);
+}
+
+.markdown-alert.markdown-alert-warning {
+  border-left-color: var(--color-warning);
+}
+
+.markdown-alert.markdown-alert-warning .markdown-alert-title {
+  color: var(--color-warning);
+}
+
+.markdown-alert.markdown-alert-tip {
+  border-left-color: var(--color-tip);
+}
+
+.markdown-alert.markdown-alert-tip .markdown-alert-title {
+  color: var(--color-tip);
+}
+
+.markdown-alert.markdown-alert-caution {
+  border-left-color: var(--color-caution);
+}
+
+.markdown-alert.markdown-alert-caution .markdown-alert-title {
+  color: var(--color-caution);
+}
+
+</style>
+        
+        </head>
+        <body class="vscode-body vscode-light">
+            <h1 id="looped-transformer-实验进展报告">Looped Transformer 实验进展报告</h1>
+<h2 id="实验模式">实验模式</h2>
+<p>交织成 (x_1, y_1, x_2, y_2, ..., x_k, y_k)，根据历史的（x_1, y_1, ..., x_i）预测 y_i</p>
+<h2 id="基础配置">基础配置</h2>
+<pre><code class="language-python">manual_config=<span class="hljs-built_in">dict</span>(
+    batch_size=<span class="hljs-number">64</span>,
+    num_blocks=<span class="hljs-number">20</span>,
+    num_eff=<span class="hljs-number">15</span>,
+    d_model=<span class="hljs-number">256</span>,
+    num_heads=<span class="hljs-number">8</span>,
+    pe_type=[<span class="hljs-string">&#x27;learned_ape&#x27;</span>],
+    x_init=<span class="hljs-string">&#x27;zero&#x27;</span>,
+    init_std=<span class="hljs-string">&#x27;auto&#x27;</span>,
+    residual_gate=(<span class="hljs-number">1</span>, <span class="hljs-number">1</span>),
+    residual_gate_type=<span class="hljs-string">&#x27;fixed&#x27;</span>,
+    optimizer_type=<span class="hljs-string">&#x27;adamw&#x27;</span>, 
+    lr=<span class="hljs-number">1e-3</span>,
+    layer_weight_decay=<span class="hljs-number">1.0</span>,  
+    seq_weight_decay=<span class="hljs-number">1.0</span>,       
+    scheduler_type=<span class="hljs-string">&#x27;cosine&#x27;</span>,  
+)
+</code></pre>
+<h2 id="curriculum-learning">Curriculum Learning</h2>
+<p><strong>Curriculum Learning</strong> 是原论文在训练阶段引入的一种渐进式训练策略，使模型从简单的低维和短序列开始学习，逐步过渡到更复杂的高维和长序列。</p>
+<h3 id="线性和非线性回归任务">线性和非线性回归任务</h3>
+<h4 id="基础配置-1">基础配置</h4>
+<pre><code class="language-python">d_x=<span class="hljs-number">20</span>,
+seq_len=<span class="hljs-number">80</span>,  
+epochs=<span class="hljs-number">50</span>,
+steps_per_epoch=<span class="hljs-number">200</span>,
+</code></pre>
+<h4 id="实验配置">实验配置</h4>
+<pre><code class="language-python">params_groups=[
+    {
+        <span class="hljs-string">&#x27;experiment_name&#x27;</span>: <span class="hljs-string">&#x27;Without Curriculum (Hard Mode)&#x27;</span>,
+        <span class="hljs-string">&#x27;curriculum&#x27;</span>: {} <span class="hljs-comment">#</span>
+    },
+    {
+        <span class="hljs-string">&#x27;experiment_name&#x27;</span>: <span class="hljs-string">&#x27;With Curriculum (Perfect Path)&#x27;</span>,
+        <span class="hljs-string">&#x27;curriculum&#x27;</span>: {
+            <span class="hljs-string">&#x27;d_x&#x27;</span>: <span class="hljs-number">5</span>, 
+            <span class="hljs-string">&#x27;seq_len&#x27;</span>: <span class="hljs-number">10</span>, 
+            <span class="hljs-string">&#x27;duration_ratio&#x27;</span>: <span class="hljs-number">0.8</span> <span class="hljs-comment"># 前 80% 的 epochs 内逐步过渡到完整序列</span>
+        }
+    }
+]
+results_lists = [
+    ([<span class="hljs-string">&#x27;1_ID_Baseline_sink_scores&#x27;</span>,<span class="hljs-string">&#x27;2_OOD_Scale_x2_sink_scores&#x27;</span>, <span class="hljs-string">&#x27;3_OOD_Seq_Extrapolation_sink_scores&#x27;</span>], <span class="hljs-string">&#x27;block&#x27;</span>),
+    ([<span class="hljs-string">&#x27;1_ID_Baseline_y_norm_ratio&#x27;</span>, <span class="hljs-string">&#x27;2_OOD_Scale_x2_y_norm_ratio&#x27;</span>, <span class="hljs-string">&#x27;3_OOD_Seq_Extrapolation_y_norm_ratio&#x27;</span>], <span class="hljs-string">&#x27;experiment&#x27;</span>),
+    ([<span class="hljs-string">&#x27;1_ID_Baseline_loss&#x27;</span>, <span class="hljs-string">&#x27;2_OOD_Scale_x2_loss&#x27;</span>, <span class="hljs-string">&#x27;3_OOD_Seq_Extrapolation_loss&#x27;</span>], <span class="hljs-string">&#x27;experiment&#x27;</span>)
+]
+eval_configs = [
+    {<span class="hljs-string">&#x27;eval_name&#x27;</span>: <span class="hljs-string">&#x27;1_ID_Baseline&#x27;</span>, <span class="hljs-string">&#x27;ood_kwargs&#x27;</span>: {}}, <span class="hljs-comment"># 分布内基准</span>
+    {<span class="hljs-string">&#x27;eval_name&#x27;</span>: <span class="hljs-string">&#x27;2_OOD_Scale_x2&#x27;</span>, <span class="hljs-string">&#x27;ood_kwargs&#x27;</span>: {<span class="hljs-string">&#x27;x_scale&#x27;</span>: <span class="hljs-number">2.0</span>}}, <span class="hljs-comment"># X 尺度放大</span>
+    {<span class="hljs-string">&#x27;eval_name&#x27;</span>: <span class="hljs-string">&#x27;3_OOD_Seq_Extrapolation&#x27;</span>, <span class="hljs-string">&#x27;ood_kwargs&#x27;</span>: {<span class="hljs-string">&#x27;seq_len_scale&#x27;</span>: <span class="hljs-number">1.2</span>}} <span class="hljs-comment"># 序列长度外推</span>
+]
+</code></pre>
+<h4 id="线性回归">线性回归</h4>
+<h5 id="数据">数据</h5>
+<p>y_i = x_i @ W ，其中 W 是一个每批次随机生成的权重矩阵。</p>
+<h5 id="实验结果">实验结果</h5>
+<p><img src="file:////Users/lihaoqi/ai_physics/Looped_Transformer/figures/linear_curriculum_learning%E8%AE%AD%E7%BB%83.png" alt="线性回归结果图"></p>
+<h5 id="结果分析">结果分析</h5>
+<ul>
+<li>在线性回归任务中，如果不使用 Curriculum Learning，模型在训练初期会陷入一个全猜0的局部极小值，Loss 长时间停滞在1.0附近，<span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>N</mi><mi>o</mi><mi>r</mi><mi>m</mi><mi>R</mi><mi>a</mi><mi>t</mi><mi>i</mi><mi>o</mi><mo>=</mo><mi mathvariant="normal">∣</mi><mi mathvariant="normal">∣</mi><msub><mi>y</mi><mrow><mi>t</mi><mi>r</mi><mi>u</mi><mi>e</mi></mrow></msub><mi mathvariant="normal">∣</mi><mi mathvariant="normal">∣</mi><mi mathvariant="normal">/</mi><mi mathvariant="normal">∣</mi><mi mathvariant="normal">∣</mi><msub><mi>y</mi><mrow><mi>p</mi><mi>r</mi><mi>e</mi><mi>d</mi></mrow></msub><mi mathvariant="normal">∣</mi><mi mathvariant="normal">∣</mi></mrow><annotation encoding="application/x-tex">Norm Ratio = ||y_{true}|| / ||y_{pred}||</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.10903em;">N</span><span class="mord mathnormal" style="margin-right:0.02778em;">or</span><span class="mord mathnormal">m</span><span class="mord mathnormal" style="margin-right:0.00773em;">R</span><span class="mord mathnormal">a</span><span class="mord mathnormal">t</span><span class="mord mathnormal">i</span><span class="mord mathnormal">o</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="base"><span class="strut" style="height:1.0361em;vertical-align:-0.2861em;"></span><span class="mord">∣∣</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.03588em;">y</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.0359em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">t</span><span class="mord mathnormal mtight" style="margin-right:0.02778em;">r</span><span class="mord mathnormal mtight">u</span><span class="mord mathnormal mtight">e</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mord">∣∣/∣∣</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.03588em;">y</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.0359em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">p</span><span class="mord mathnormal mtight">re</span><span class="mord mathnormal mtight">d</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mord">∣∣</span></span></span></span> 收敛于0.0，表明模型完全没有学到有效的映射关系。</li>
+<li>引入 Curriculum Learning 后，模型能够逐步适应更长的序列和更高维度的数据，Loss 稳步下降，Norm Ratio 也逐渐上升。在curriculum结束后的 20% 的 epochs 内，Loss 和 Norm Ratio 的下降不再波动，变得平滑，表明模型学会了正确的线性映射关系。</li>
+</ul>
+<h5 id="评估结果">评估结果</h5>
+<p>包含两个实验的 sink score 随层深的演化折线图，以及 ID 与两种 OOD 场景下 Loss 与 Norm Ratio 的对比图。
+<img src="file:////Users/lihaoqi/ai_physics/Looped_Transformer/figures/linear_curriculum_learning%E8%AF%84%E4%BC%B0.png" alt="线性回归评估图"></p>
+<h4 id="非线性回归">非线性回归</h4>
+<h5 id="数据-1">数据</h5>
+<p>y_i = 2**0.5 * relu(x_i @ W_1) @ W_2，其中 W_1、W_2 是每批次随机生成的权重矩阵和偏置向量。</p>
+<h5 id="实验结果-1">实验结果</h5>
+<p><img src="file:////Users/lihaoqi/ai_physics/Looped_Transformer/figures/nonlinear_curriculum_learning%E8%AE%AD%E7%BB%83.png" alt="非线性回归结果图"></p>
+<h5 id="结果分析-1">结果分析</h5>
+<ul>
+<li>在非线性回归任务中，模型在没有 Curriculum Learning 的情况下，在前半段时间内只学会了部分规律，Loss 在0.74附近震荡，Norm Ratio 在0.52左右徘徊，停滞不前；而在后半段时间内，模型突然顿悟，Loss 开始平滑稳定地下降，Norm Ratio 也迅速上升，表明模型在某个临界点（25～30epochs处，合5000～6000 steps）上成功解开了非线性映射关系。</li>
+<li>引入 Curriculum Learning 后，模型能够更早地适应非线性关系，Loss 和 Norm Ratio 的下降更加平滑稳定，没有明显的顿悟现象，表明模型在整个训练过程中都在持续地学习和优化非线性映射关系。</li>
+</ul>
+<h5 id="评估结果-1">评估结果</h5>
+<p>包含两个实验的 sink score 随层深的演化折线图，以及 ID 与两种 OOD 场景下 Loss 与 Norm Ratio 的对比图。
+<img src="file:////Users/lihaoqi/ai_physics/Looped_Transformer/figures/nonlinear_curriculum_learning%E8%AF%84%E4%BC%B0.png" alt="非线性回归评估图"></p>
+<h3 id="lorenz-attractor">Lorenz Attractor</h3>
+<h4 id="基础配置-2">基础配置</h4>
+<pre><code class="language-python">d_x=<span class="hljs-number">3</span>,
+d_y=<span class="hljs-number">3</span>,
+seq_len=<span class="hljs-number">300</span>,  
+epochs=<span class="hljs-number">50</span>,
+steps_per_epoch=<span class="hljs-number">50</span>,
+optimizer_type=<span class="hljs-string">&#x27;muon_adamw&#x27;</span>,
+lorenz_kwargs=<span class="hljs-built_in">dict</span>(dt=<span class="hljs-number">0.01</span>, burn_in=<span class="hljs-number">500</span>)
+</code></pre>
+<h4 id="实验配置-1">实验配置</h4>
+<pre><code class="language-python">param_groups = [
+    {
+        <span class="hljs-string">&#x27;experiment_name&#x27;</span>: <span class="hljs-string">&#x27;Lorenz Without Curriculum (Hard Mode)&#x27;</span>,
+        <span class="hljs-string">&#x27;curriculum&#x27;</span>: {}          <span class="hljs-comment"># 关闭课程学习，一上来就啃 150 步长序列</span>
+    },
+    {
+        <span class="hljs-string">&#x27;experiment_name&#x27;</span>: <span class="hljs-string">&#x27;Lorenz With Curriculum (Perfect Path)&#x27;</span>,
+        <span class="hljs-comment"># 删除了&#x27;d_x&#x27; 渐变（因为d_x固定为3），仅对时序步长进行课程演进</span>
+        <span class="hljs-string">&#x27;curriculum&#x27;</span>: {
+            <span class="hljs-string">&#x27;seq_len&#x27;</span>: <span class="hljs-number">20</span>,        <span class="hljs-comment"># 课程从极短的 20 步（10对点）开始，降低初始积分关联难度</span>
+            <span class="hljs-string">&#x27;duration_ratio&#x27;</span>: <span class="hljs-number">0.8</span> <span class="hljs-comment"># 前 30 个 epoch 随着线性进度逐步拉长到 150 步</span>
+        }
+    }
+]
+</code></pre>
+<h4 id="公式">公式</h4>
+<p>洛伦兹系统的微分方程：</p>
+<p class="katex-block"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mover accent="true"><mi>x</mi><mo>˙</mo></mover><mo>=</mo><mi>σ</mi><mo stretchy="false">(</mo><mi>y</mi><mo>−</mo><mi>x</mi><mo stretchy="false">)</mo><mo separator="true">,</mo><mover accent="true"><mi>y</mi><mo>˙</mo></mover><mo>=</mo><mi>x</mi><mo stretchy="false">(</mo><mi>ρ</mi><mo>−</mo><mi>z</mi><mo stretchy="false">)</mo><mo>−</mo><mi>y</mi><mo separator="true">,</mo><mover accent="true"><mi>z</mi><mo>˙</mo></mover><mo>=</mo><mi>x</mi><mi>y</mi><mo>−</mo><mi>β</mi><mi>z</mi></mrow><annotation encoding="application/x-tex">\dot{x} = \sigma(y - x), \dot{y} = x(\rho - z) - y, \dot{z} = xy - \beta z
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.6679em;"></span><span class="mord accent"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.6679em;"><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="mord mathnormal">x</span></span><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="accent-body" style="left:-0.1111em;"><span class="mord">˙</span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="base"><span class="strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal" style="margin-right:0.03588em;">σ</span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right:0.03588em;">y</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="base"><span class="strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal">x</span><span class="mclose">)</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord accent"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.6679em;"><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="mord mathnormal" style="margin-right:0.03588em;">y</span></span><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="accent-body" style="left:-0.0833em;"><span class="mord">˙</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.1944em;"><span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="base"><span class="strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal">x</span><span class="mopen">(</span><span class="mord mathnormal">ρ</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="base"><span class="strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal" style="margin-right:0.04398em;">z</span><span class="mclose">)</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="base"><span class="strut" style="height:0.8623em;vertical-align:-0.1944em;"></span><span class="mord mathnormal" style="margin-right:0.03588em;">y</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord accent"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.6679em;"><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="mord mathnormal" style="margin-right:0.04398em;">z</span></span><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="accent-body" style="left:-0.0833em;"><span class="mord">˙</span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="base"><span class="strut" style="height:0.7778em;vertical-align:-0.1944em;"></span><span class="mord mathnormal">x</span><span class="mord mathnormal" style="margin-right:0.03588em;">y</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="base"><span class="strut" style="height:0.8889em;vertical-align:-0.1944em;"></span><span class="mord mathnormal" style="margin-right:0.05278em;">β</span><span class="mord mathnormal" style="margin-right:0.04398em;">z</span></span></span></span></span></p>
+<p>其中 <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>σ</mi><mo>=</mo><mn>10</mn><mo separator="true">,</mo><mi>ρ</mi><mo>=</mo><mn>28</mn><mo separator="true">,</mo><mi>β</mi><mo>=</mo><mn>8</mn><mi mathvariant="normal">/</mi><mn>3</mn></mrow><annotation encoding="application/x-tex">\sigma=10, \rho=28, \beta=8/3</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.4306em;"></span><span class="mord mathnormal" style="margin-right:0.03588em;">σ</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="base"><span class="strut" style="height:0.8389em;vertical-align:-0.1944em;"></span><span class="mord">10</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal">ρ</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="base"><span class="strut" style="height:0.8889em;vertical-align:-0.1944em;"></span><span class="mord">28</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal" style="margin-right:0.05278em;">β</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="base"><span class="strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord">8/3</span></span></span></span>。</p>
+<h4 id="数据-2">数据</h4>
+<p>在数据生成中，通过rk4方法生成一段trajectory（记为r_1,...,r_k），x=(r_1, r_2, ..., r_k-1)，y=(r_2, r_3, ..., r_k)。d_x = 3，d_y = 3。模型的输入输出都是三维空间中的点序列，目标是学习从当前状态单步预测下一个状态的映射关系。配置为 dt = 0.01，burn_in = 500(丢弃前 500 步的初始过渡态)</p>
+<h4 id="实验结果-2">实验结果</h4>
+<p><img src="file:////Users/lihaoqi/ai_physics/Looped_Transformer/figures/lorenz_curriculum_learning%E8%AE%AD%E7%BB%83.png" alt="洛伦兹系统结果图"></p>
+<h4 id="结果分析-2">结果分析</h4>
+<ul>
+<li>在洛伦兹系统的实验中，模型不管是否使用 Curriculum Learning，都能快速在1000 steps 内将 Loss 降到 0.1 以下，Norm Ratio 提升到 0.9 以上，但 Curriculum Learning 的引入使得模型训练效率大幅提升，取得同样的性能只需一半多一点的训练时间（因为seq_len小的时候训练耗时更短）。</li>
+</ul>
+<h4 id="评估结果-2">评估结果</h4>
+<p><img src="file:////Users/lihaoqi/ai_physics/Looped_Transformer/figures/lorenz_curriculum_learning%E8%AF%84%E4%BC%B0.png" alt="洛伦兹系统评估图"></p>
+<p>观察发现，Lorenz Attractor 任务中，sink score 的层深依赖曲线和上面的线性、非线性回归任务不同，呈现出在第 3～4 层出现一个明显的峰值，之后深层的 sink score 反而回落。</p>
+<h3 id="统一作图分析">统一作图分析</h3>
+<p><img src="file:////Users/lihaoqi/ai_physics/Looped_Transformer/figures/unified_dots.png" alt="末态结果散点图">
+<img src="file:////Users/lihaoqi/ai_physics/Looped_Transformer/figures/unified_eval_exps.png" alt="末态各实验评估对比图">
+<img src="file:////Users/lihaoqi/ai_physics/Looped_Transformer/figures/unified_eval_oods.png" alt="末态各实验ood的sink score对比图"></p>
+<h2 id="lorenz-attractor-任务的多步-rollout-评估分析">Lorenz Attractor 任务的多步 rollout 评估分析</h2>
+<h3 id="实验配置-2">实验配置</h3>
+<ul>
+<li>150 步长的序列输入，模型完全自回归地盲推 1000 步，评估模型是否学会了混沌流形</li>
+<li>采用已训练5000 steps 的模型（此时 Loss 已经稳定在 0.01 以下，Norm Ratio 稳定在 0.9999 以上），分别在 ID 和 OOD 场景下进行评估，OOD 场景包括参数偏移（rho_shift=5.0，也就是 <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>r</mi><mi>h</mi><mi>o</mi></mrow><annotation encoding="application/x-tex">rho</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.6944em;"></span><span class="mord mathnormal" style="margin-right:0.02778em;">r</span><span class="mord mathnormal">h</span><span class="mord mathnormal">o</span></span></span></span> 从 28 变为 33）。</li>
+</ul>
+<h3 id="结果分析-3">结果分析</h3>
+<h4 id="in-distribution-评估">In Distribution 评估</h4>
+<p><img src="file:////Users/lihaoqi/ai_physics/Looped_Transformer/figures/lorenz_id_rollout.png" alt="Lorenz ID rollout图"></p>
+<p>可以看到，在 ID 场景下，模型能够非常准确地预测出混沌流形的轨迹，生成的轨迹与真实轨迹几乎一模一样，表明模型成功学会了洛伦兹系统的动力学规律。</p>
+<h4 id="out-of-distribution-评估">Out of Distribution 评估</h4>
+<p><img src="file:////Users/lihaoqi/ai_physics/Looped_Transformer/figures/lorenz_ood_rollout.png" alt="Lorenz OOD rollout图"></p>
+<p>可以看到，形状仍然是光滑的蝴蝶翅膀流形，与ID场景下的轨迹非常相似，但是由于 <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>r</mi><mi>h</mi><mi>o</mi></mrow><annotation encoding="application/x-tex">rho</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.6944em;"></span><span class="mord mathnormal" style="margin-right:0.02778em;">r</span><span class="mord mathnormal">h</span><span class="mord mathnormal">o</span></span></span></span> 的偏移，真实流形的尺度发生了明显的变化，模型生成的轨迹在尺度上明显比真实流形偏小，和ID场景的轨迹更接近，表明模型学会了洛伦兹系统的动力学规律，但对参数偏移的泛化能力有限。</p>
+<h4 id="对缺乏长期训练只训练了不到1000-steps的模型进行同样的评估">对缺乏长期训练（只训练了不到1000 steps）的模型进行同样的评估</h4>
+<p><img src="file:////Users/lihaoqi/ai_physics/Looped_Transformer/figures/curr_id.png" alt="Lorenz ID rollout图（早期模型）">
+<img src="file:////Users/lihaoqi/ai_physics/Looped_Transformer/figures/curr_ood.png" alt="Lorenz OOD rollout图（早期模型）"></p>
+<p>可以看到，早期模型生成的轨迹也是蝴蝶翅膀的形状，在远离边界的区域与真实轨迹较为接近，但在边界附近发生了生硬的转折，尤其是在 OOD 场景下，好像把OOD的边界外真实三维数据“投影”到了ID的边界上，有明显的<span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mi>C</mi><mn>1</mn></msup></mrow><annotation encoding="application/x-tex">C^1</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.8141em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.07153em;">C</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8141em;"><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight">1</span></span></span></span></span></span></span></span></span></span></span>不连续现象。</p>
+
+            <script async src="https://cdn.jsdelivr.net/npm/katex-copytex@latest/dist/katex-copytex.min.js"></script>
+            
+        </body>
+        </html>
