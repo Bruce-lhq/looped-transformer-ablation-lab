@@ -176,6 +176,32 @@ result_lists = [
 ]
 ```
 
+### params_groups 格式
+
+所有可覆写参数见[可覆写参数一览](#可覆写参数default_setup)。`ExperimentTable.__init__` 接收 `params_groups`（实验列表）和可选的 `manual`（全局覆写）。
+
+```python
+# 模板：[ {实验1字典}, {实验2字典}, ... ]
+#   最外层 []  = 实验列表
+#   里面 {}    = 每个实验的参数字典
+
+params_groups = [
+    # 实验 1
+    {
+        'experiment_name': '基线',           # 必填：实验名称
+        'pe_type': ['learned_ape'],          # ⚠️ 就算只有一个 PE，也必须用中括号 []
+        'residual_gate': (1, 1),             # 门控初始值用小括号 ()
+    },
+    # 实验 2
+    {
+        'experiment_name': 'OOD测试',
+        'pe_type': ['ms_upe', 'alibi'],      # 多个 PE 用逗号隔开，套在中括号 [] 里
+        'residual_gate': 'random',           # 字符串直接写
+        'residual_gate_type': 'learnable_scalar',
+    },
+]
+```
+
 ### run 参数
 
 | 参数 | 类型 | 默认 | 说明 |
@@ -207,6 +233,45 @@ result_lists = [
 | LoopedTransformerExperiment | `lr`, `lr_muon`, `lr_nora`, `gate_lr_ratio`, `optimizer_type`(`'muon_adamw'`/`'nora_adamw'`/...), `seed`, `load_path`(`'auto'`) |
 | dataloader | `batch_size`, `seq_len`, `sink_padding`, `d_hidden`, `function_callable`, `lorenz_kwargs`, `load_lorenz_from` |
 | train | `epochs`, `steps_per_epoch`, `data_type`, `scheduler_type`, `eta_min`, `scheduled_training`, `curriculum`, `save_path`(`'auto'`) |
+
+### 可用指标一览
+
+`get_results()` 返回的全部 metric key（`result_lists` 里可用的名字）：
+
+**训练过程指标**（横轴 `epoch`，值为 `list[float]`）：
+
+| 指标 | 说明 |
+|---|---|
+| `loss_history` / `y_pred_norm_history` / `y_true_norm_history` | 损失 / 预测范数 / 真实范数 |
+| `y_norm_error_history` / `y_norm_ratio_history` / `y_norm_ratio_abs_history` | 范数差 / 范数比 / 范数比偏差 |
+| `y_cos_history` / `y_cos_1_history` | 预测与真实的余弦相似度 / 其补数 |
+| `sink_score_history` / `sink_rate_history` | 注意力向位置 0 集中的程度 |
+| `residual_gate_history_a/b`（标量）/ `_mean`/`_std`（向量）/ `_relative` 变种 | 残差门控 (a,b) 及其相对初值的变化 |
+| `captured_sink_scores` / `captured_sink_rates` / `captured_attention` | 最后一次前向捕获的逐层值 |
+
+**汇总指标**（横轴 `experiment`，单值）：`final_loss`、`final_y_pred_norm`、`final_y_true_norm`、`final_sink_score`、`final_sink_rate`、`final_residual_gate_a/b`（及 `_mean`/`_std`）、`init_time`、`train_time`。
+
+**评估指标**（前缀 `{eval_name}_`，来自 `eval_configs`）：`{eval_name}_loss`、`_y_pred_norm`、`_y_true_norm`、`_y_norm_ratio`、`_y_norm_ratio_abs`、`_y_cos`、`_y_cos_1`、`_sink_scores`（横轴 `block`）、`_sink_rates`、`_captured_attention`。
+
+### 绑图逻辑详解
+
+**`compare_experiments=True`（横向对比，默认）**：一张子图 = 一个指标，所有实验同图对比。一个 `result_list` 里写多个指标时自动拆成多张子图（不会把不同量级的指标塞一张图）。
+
+**`compare_experiments=False`（独立模式）**：一张子图 = 一个实验 × 一个指标组。`result_list` 中 `'|'` 左侧的指标绑左轴，右侧绑右轴（`twinx`）；不要把量级差异大的指标都放同一侧。
+
+**横轴类型**：
+- `'epoch'`：训练过程折线（metric 须为 `list`）；
+- `'block'`：模型深度折线，仅限 eval 的 `*_sink_scores` / `*_sink_rates`（逐层 captured）；
+- `'experiment'`：汇总柱状图（metric 为单值）。
+
+**baseline 相对值**：`result_list` 第三项指定基线索引，画相对差值（基线标 `(Baseline)`）。
+
+**总子图数**：
+
+| 模式 | 总数 |
+|---|---|
+| 对比（True） | Σ(每条 result_list 中 `'|'` 之外的指标数) |
+| 独立（False） | 实验数 × Σ(每条 result_list 的指标组数) |
 
 ### 常见报错
 
@@ -241,6 +306,36 @@ result_lists = [
 
 ---
 
+## 已完成实验的发现
+
+从 commit 历史与实验报告提炼的关键结论（参数都是试出来的）。
+
+### 1. Scheduled Training vs Non-Scheduled
+渐进式增加有效层数（Scheduled Training）的初期 loss 更低更稳，长期收敛点相近——故默认 `scheduled_training=False`。
+
+### 2. 位置编码对比（5 种 PE）
+ALiBi 综合最优；score/QK 层面注入（ALiBi/RoPE）优于输入端（LearnedAPE）；MS-UPE + LearnedAPE 叠加无益。
+
+### 3. Sink Padding 消融
+各组曲线高度重叠，sink padding 对最终 Loss 没有决定性正面影响——默认 `None`。
+
+### 4. 残差门控消融
+所有门控配置收敛水平接近，对初始值不敏感；可学习门控的 a/b 漂移幅度 < 0.2。
+
+### 5. Curriculum Learning（打破"d_x 之墙"）
+从低维短序列起步、逐步放大的 curriculum 有效打破高维线性回归的"d_x 之墙"；在 nonlinear 和 Lorenz 任务上同样显著提升收敛速度与最终精度。
+
+### 6. Lorenz 消融
+与线性任务相反，`ms_upe + alibi` 叠加在此任务有效；muon_adamw + swiglu + cosine 为最佳组合。
+
+### 7. 收缩吸引子定理
+MSE loss 下，Looped Transformer 必然收敛到 shrinkage estimator（λ\*≈0.5–0.7）——模型"学会"了在预测方差与偏差之间做最优权衡。
+
+### 8. OOD 标度律
+loss 与 norm ratio 满足跨任务幂律 `L = A·R^B`，在 linear/nonlinear/Lorenz 三任务、多种 OOD 场景下验证。
+
+---
+
 ## 依赖
 
 | 用途 | 包 |
@@ -259,8 +354,52 @@ uv pip install -r requirements.txt
 
 ## 待完成与未来工作
 
-- **实验框架**：`plot()` 对 `'block'` 横轴的多场景对比、3D 动画导出；
-- **任务扩展**：ODE 数据生成器、逻辑推理任务；
-- **模型探针**：各层线性探针检测闭式解 $w=(X^\top X)^{-1}X^\top y$ 的涌现；
-- **归一化**：W_Q/W_K/W_V 的谱归一化对稳定性的影响；
-- **Grokking**：大 epochs/batch 下观察顿悟现象。
+按上手难度从低到高排列。每个任务均标注了状态与涉及的文件。
+
+### A. 开箱即用
+
+无需改代码，直接用 `ExperimentTable` 跑。
+
+#### 全参数扫描 ✅ 已实现
+
+利用 `ExperimentTable` 对任意参数进行对比实验：离散参数枚举取值 → `run()` → `plot()`；
+连续参数已通过 Optuna 搜参（见 `experiments/optuna/hpo.py`）。
+
+### B. 少量扩展
+
+#### 两处 pass 补全 ✅ 已实现
+
+`plot()` 中已支持实验汇总柱状图（横轴 `'experiment'`）和评估结果画图（`modes=['evaluate']`）。
+
+#### 首 loss 归一化
+
+新增 `plot()` 选项，将每条 loss 曲线除以其首个 epoch 值，消除初始尺度差异，只看相对下降幅度。
+
+#### 分头 attention 可视化
+
+利用已有的 `AttentionProbe` 捕获的 `captured_attention`，按头切片画热力图，观察不同头的注意力模式差异。
+
+#### 模型探针
+
+在 `ToyModel` 各层插入线性探针，检测模型在何时学会线性回归的闭式解 $w = (X^TX)^{-1}X^Ty$。
+
+#### Grokking 观察
+
+在大显存设备上增大 `epochs` 和 `batch_size`，观察是否出现顿悟现象（loss 长时间不降后突然收敛）。
+
+### C. 新模块开发
+
+需要新建模块或对核心架构做较大改动。
+
+#### 画梯度下降图
+
+在 `experiment.py` 训练循环中收集梯度范数或参数变化轨迹，新增可视化模块画参数空间中的优化路径。
+
+#### 添加归纳偏置
+
+在 `toy_model.py` 或 `transformer_block.py` 中引入结构性先验：正交/恒等初始化、低秩分解、门控范围约束等。
+
+#### 新任务扩展
+
+- 逻辑推理任务（离散序列预测等）
+- 更多物理系统（ODE 生成器——目前 Lorenz 已支持，可扩展双摆、Van der Pol 等）
