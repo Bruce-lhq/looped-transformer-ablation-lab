@@ -120,6 +120,10 @@ Looped_Transformer/
 ├── saved_checkpoints/         # 训练 checkpoint（gitignored）
 ├── figures/                   # 实验输出图（gitignored）
 ├── Looped_Transformer.ipynb   # 原始 notebook（权威对照）
+├── Looped_Transformer.pdf     #   notebook 导出的 PDF
+├── Looped Transformer 实验进展报告.md   #   实验进展报告（MD）
+├── Looped Transformer 实验进展报告.pdf  #   实验进展报告（PDF）
+├── run_monitor.sh             #   Web 监控面板一键启动
 ├── requirements.txt
 ├── LICENSE
 └── README.md
