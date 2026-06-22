@@ -4,8 +4,7 @@
 与动力学分析框架。下游任务覆盖**线性回归、非线性回归、Lorenz 混沌系统下一帧预测**三大场景，
 支持 curriculum learning、Muon/Nora 混合优化器、OOD 泛化评估、checkpoint 断点续训。
 
-> 本分支（`package`）由原 `Looped_Transformer.ipynb`（保留在 `future` 分支）拆解而来，
-> 以可维护的小 `.py` 文件为主，便于增量修改。
+> 由原 `Looped_Transformer.ipynb` 拆解而来，以可维护的小 `.py` 文件为主，便于增量修改。
 
 ## 目录
 
