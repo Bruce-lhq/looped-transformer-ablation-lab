@@ -15,8 +15,10 @@
 4. [快速启动](#快速启动)
 5. [实验框架：ExperimentTable](#实验框架experimenttable)
 6. [实验脚本](#实验脚本)
-7. [依赖](#依赖)
-8. [待完成与未来工作](#待完成与未来工作)
+7. [已完成实验的发现](#已完成实验的发现)
+8. [Web 监控面板](#web-监控面板)
+9. [依赖](#依赖)
+10. [待完成与未来工作](#待完成与未来工作)
 
 ---
 
@@ -111,9 +113,14 @@ Looped_Transformer/
 │   ├── curriculum/            # 三任务 curriculum + 统一分析
 │   ├── lorenz/                # Lorenz 消融 + 3D rollout
 │   └── optuna/                # 超参搜索
+├── src/                       # 旧入口与独立脚本（历史保留，已被 experiments/ 替代）
+│   ├── main.py                #   旧 PE 对比入口
+│   └── lorenz/lorenz_attractor_anim.py  #   Lorenz 吸引子动画 GIF 生成器
+├── web_monitor/               # FastAPI 实时监控面板（server.py + index.html）
 ├── data/lorenz/               # Lorenz 离线轨迹池（gitignored，由脚本生成）
 ├── saved_checkpoints/         # 训练 checkpoint（gitignored）
 ├── figures/                   # 实验输出图（gitignored）
+├── Looped_Transformer.ipynb   # 原始 notebook（权威对照）
 ├── requirements.txt
 ├── LICENSE
 └── README.md
@@ -209,6 +216,45 @@ result_lists = [
 | dataloader | `batch_size`, `seq_len`, `sink_padding`, `d_hidden`, `function_callable`, `lorenz_kwargs`, `load_lorenz_from` |
 | train | `epochs`, `steps_per_epoch`, `data_type`, `scheduler_type`, `eta_min`, `scheduled_training`, `curriculum`, `save_path`(`'auto'`) |
 
+### 可用指标一览
+
+`get_results()` 返回的全部 metric key（`result_lists` 里可用的名字）：
+
+**训练过程指标**（横轴 `epoch`，值为 `list[float]`）：
+
+| 指标 | 说明 |
+|---|---|
+| `loss_history` / `y_pred_norm_history` / `y_true_norm_history` | 损失 / 预测范数 / 真实范数 |
+| `y_norm_error_history` / `y_norm_ratio_history` / `y_norm_ratio_abs_history` | 范数差 / 范数比 / 范数比偏差 |
+| `y_cos_history` / `y_cos_1_history` | 预测与真实的余弦相似度 / 其补数 |
+| `sink_score_history` / `sink_rate_history` | 注意力向位置 0 集中的程度 |
+| `residual_gate_history_a/b`（标量）/ `_mean`/`_std`（向量）/ `_relative` 变种 | 残差门控 (a,b) 及其相对初值的变化 |
+| `captured_sink_scores` / `captured_sink_rates` / `captured_attention` | 最后一次前向捕获的逐层值 |
+
+**汇总指标**（横轴 `experiment`，单值）：`final_loss`、`final_y_pred_norm`、`final_y_true_norm`、`final_sink_score`、`final_sink_rate`、`final_residual_gate_a/b`（及 `_mean`/`_std`）、`init_time`、`train_time`。
+
+**评估指标**（前缀 `{eval_name}_`，来自 `eval_configs`）：`{eval_name}_loss`、`_y_pred_norm`、`_y_true_norm`、`_y_norm_ratio`、`_y_norm_ratio_abs`、`_y_cos`、`_y_cos_1`、`_sink_scores`（横轴 `block`）、`_sink_rates`、`_captured_attention`。
+
+### 绑图逻辑详解
+
+**`compare_experiments=True`（横向对比，默认）**：一张子图 = 一个指标，所有实验同图对比。一个 `result_list` 里写多个指标时自动拆成多张子图（不会把不同量级的指标塞一张图）。
+
+**`compare_experiments=False`（独立模式）**：一张子图 = 一个实验 × 一个指标组。`result_list` 中 `'|'` 左侧的指标绑左轴，右侧绑右轴（`twinx`）；不要把量级差异大的指标都放同一侧。
+
+**横轴类型**：
+- `'epoch'`：训练过程折线（metric 须为 `list`）；
+- `'block'`：模型深度折线，仅限 eval 的 `*_sink_scores` / `*_sink_rates`（逐层 captured）；
+- `'experiment'`：汇总柱状图（metric 为单值）。
+
+**baseline 相对值**：`result_list` 第三项指定基线索引，画相对差值（基线标 `(Baseline)`）。
+
+**总子图数**：
+
+| 模式 | 总数 |
+|---|---|
+| 对比（True） | Σ(每条 result_list 中 `'|'` 之外的指标数) |
+| 独立（False） | 实验数 × Σ(每条 result_list 的指标组数) |
+
 ### 常见报错
 
 | 报错 | 原因 |
@@ -239,6 +285,41 @@ result_lists = [
 | `experiments/lorenz/ablation.py` | Lorenz 8 维消融（PE/optim/scheduled/scheduler/heads/ffn/loop/norm） |
 | `experiments/lorenz/eval_3d.py` | Lorenz 闭环自回归 1000 步 rollout 的 3D 轨迹（ID + OOD） |
 | `experiments/optuna/hpo.py` | Lorenz 多目标超参搜索 + 消融热力图 |
+
+---
+
+## 已完成实验的发现
+
+从 commit 历史与实验报告提炼的关键结论（参数都是试出来的）：
+
+1. **Scheduled Training**：训练初期 loss 更低更稳，长期收敛点相近——故默认 `scheduled_training=False`（"用处并不大"）。
+2. **PE 对比（线性任务）**：ALiBi 综合最优；score/QK 层面注入（ALiBi/RoPE）优于输入端（LearnedAPE）；MS-UPE + LearnedAPE 叠加**无益**。
+3. **Sink Padding**：线性任务无明显收益（各组曲线重叠），默认 `None`。
+4. **Residual Gate**：对初值不敏感，可学习门控的 a/b 漂移幅度 < 0.2。
+5. **Curriculum Learning**：打破"d_x 之墙"（高维线性回归 loss 极难下降），从低维短序列起步逐步放大是关键。
+6. **Lorenz 消融**：与线性任务相反，**MS-UPE + ALiBi 叠加在此任务有效**；Muon/Nora + swiglu + cosine 为最佳组合。
+7. **收缩吸引子定理**：MSE loss 下，Looped Transformer 必然收敛到 shrinkage estimator（λ\*≈0.5–0.7）。
+8. **OOD 标度律**：loss 与 norm ratio 满足幂律 `L = A·R^B`，跨线性/非线性/Lorenz 三任务验证。
+
+---
+
+## Web 监控面板
+
+基于 FastAPI + 纯 HTML/ECharts 的实时训练监控面板（`web_monitor/`），零侵入——通过劫持
+`sys.stdout` + 正则提取 Epoch/Loss，再经 WebSocket 推送，不改任何库代码。
+
+**启动**：
+
+```bash
+bash run_monitor.sh
+# 浏览器打开 http://localhost:8000
+```
+
+**功能**：动态参数配置（侧边栏增删实验卡片）、一键加载基线、实时 Loss 曲线（WebSocket + EMA 平滑）、
+安全中断（`ctypes` 向训练线程注入异常 + 自动 offload）、训练完结果原地展示、Compare 模式（ON 横向对比 / OFF 双 Y 轴）、可拖动布局。
+
+**架构**：浏览器（`index.html`）↔ FastAPI（`server.py`），训练在独立线程（`asyncio.to_thread`），
+`StdoutHijacker` → 线程安全队列 → 异步桥 → WebSocket。
 
 ---
 

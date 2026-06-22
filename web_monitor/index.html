@@ -1,0 +1,2386 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Looped Transformer — 实时训练监控面板</title>
+
+<!--
+  ============================================================================
+  设计理念 — Retro-Futuristic Terminal (复古未来主义终端)
+  ============================================================================
+
+  美学方向：
+    将 1980 年代 CRT 终端的美学与 22 世纪的量子计算监控站融合。
+    深空黑底色模拟宇宙微波背景辐射，霓虹青 (#00f0ff) 来自氦氖激光器的
+    标志性波长，霓虹紫 (#b400ff) 致敬合成孔径雷达的伪彩色调。
+
+  排版哲学：
+    - 标题使用 Orbitron (Google Fonts) — 几何无衬线，源自科幻电影的
+      标题设计传统，传达"技术先进性"
+    - 数据/日志使用 JetBrains Mono — 连字特性 + 等宽设计，确保数字
+      对齐和代码可读性，符合监控面板的功能需求
+
+  空间构成：
+    采用非对称双栏布局 (320px / 1fr)，左侧配置区用紧凑的信息密度营造
+    "控制台"感受，右侧大面积的图表区域用留白和低透明度网格线创造
+    "深空观测窗"的意象。
+
+  色彩系统 (OKLCH 色彩空间)：
+    - 背景:  oklch(0.06 0.01 260)   — 深空黑
+    - 表面:  oklch(0.10 0.01 260)   — 暗物质灰
+    - 主强调: oklch(0.85 0.15 200)  — 氦氖激光青
+    - 次强调: oklch(0.65 0.22 300)  — 合成孔径紫
+    - 第三强调: oklch(0.78 0.18 160) — 矩阵绿
+    - 文本:   oklch(0.90 0.01 260)  — 月光白
+    - 边框:   oklch(0.25 0.02 260)  — 钛合金灰
+
+  动效策略：
+    - CRT 扫描线: 纯 CSS repeating-linear-gradient + animation
+    - 状态指示灯: 脉冲 glow (box-shadow 呼吸动画)
+    - 卡片入场: staggered fadeInUp (animation-delay 递增)
+    - 悬停反馈: 边框 glow 扩散 (box-shadow transition)
+    - 日志流: 新条目从顶部滑入
+    - 按钮: 按压深度反馈 (translateY + shadow collapse)
+
+  技术架构：
+    - 100% 纯 HTML + Vanilla JS (ES2022)
+    - Tailwind CSS v4 via Browser CDN (CSS-first @theme 配置)
+    - ECharts 5.5 via CDN (实时 Loss 曲线渲染)
+    - WebSocket 双向通信 (实时数据流 + 心跳检测)
+  ============================================================================
+-->
+
+<!-- Tailwind CSS v4 — Browser CDN -->
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+
+<!-- Google Fonts: Orbitron (标题) + JetBrains Mono (数据/日志) -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
+
+<!-- ECharts CDN -->
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+
+<!--
+  ============================================================================
+  Tailwind v4 @theme — 设计令牌 (Design Tokens)
+  ============================================================================
+  使用 OKLCH 色彩空间定义所有颜色变量。
+  Tailwind v4 的 CSS-first 配置方式，无需 tailwind.config.js。
+-->
+<style type="text/tailwindcss">
+  @import "tailwindcss";
+
+  @theme {
+    /* ——— 色彩系统 ——— */
+    --color-void-950: oklch(0.06 0.01 260);
+    --color-void-900: oklch(0.08 0.01 260);
+    --color-void-850: oklch(0.10 0.01 260);
+    --color-void-800: oklch(0.12 0.015 260);
+    --color-void-700: oklch(0.18 0.02 260);
+    --color-void-600: oklch(0.25 0.02 260);
+
+    --color-neon-cyan: oklch(0.85 0.15 200);
+    --color-neon-cyan-dim: oklch(0.55 0.1 200);
+    --color-neon-purple: oklch(0.65 0.22 300);
+    --color-neon-purple-dim: oklch(0.40 0.15 300);
+    --color-neon-green: oklch(0.78 0.18 160);
+    --color-neon-red: oklch(0.65 0.25 20);
+
+    --color-moon: oklch(0.90 0.01 260);
+    --color-moon-dim: oklch(0.60 0.02 260);
+    --color-titanium: oklch(0.25 0.02 260);
+
+    /* ——— 字体系统 ——— */
+    --font-display: 'Orbitron', sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+
+    /* ——— 圆角 ——— */
+    --radius-panel: 0.5rem;
+    --radius-card: 0.375rem;
+    --radius-btn: 0.25rem;
+
+    /* ——— 动画 ——— */
+    --animate-fade-in: fade-in 0.4s ease-out both;
+    --animate-slide-up: slide-up 0.4s ease-out both;
+    --animate-pulse-glow: pulse-glow 2s ease-in-out infinite;
+    --animate-scanline: scanline 8s linear infinite;
+    --animate-log-entry: log-entry 0.3s ease-out both;
+
+    @keyframes fade-in {
+      from { opacity: 0; }
+      to   { opacity: 1; }
+    }
+
+    @keyframes slide-up {
+      from { opacity: 0; transform: translateY(16px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes pulse-glow {
+      0%, 100% { box-shadow: 0 0 4px oklch(0.85 0.15 200 / 0.3); }
+      50%      { box-shadow: 0 0 16px oklch(0.85 0.15 200 / 0.6); }
+    }
+
+    @keyframes scanline {
+      from { transform: translateY(0); }
+      to   { transform: translateY(100vh); }
+    }
+
+    @keyframes log-entry {
+      from { opacity: 0; transform: translateX(-8px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+  }
+
+  /* ——— 基础层 ——— */
+  @layer base {
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: oklch(0.25 0.02 260) transparent;
+    }
+
+    *::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+
+    *::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    *::-webkit-scrollbar-thumb {
+      background: oklch(0.25 0.02 260);
+      border-radius: 3px;
+    }
+
+    *::-webkit-scrollbar-thumb:hover {
+      background: oklch(0.35 0.03 260);
+    }
+
+    body {
+      font-family: var(--font-mono);
+      background-color: var(--color-void-950);
+      color: var(--color-moon);
+      overflow: hidden;
+      height: 100vh;
+    }
+
+    /* 自定义选择框样式 — 深色主题下拉菜单 */
+    select {
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M6 8L1 3h10z' fill='%2300f0ff'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 0.5rem center;
+      padding-right: 2rem;
+    }
+
+    input[type="number"] {
+      appearance: textfield;
+    }
+
+    input[type="number"]::-webkit-inner-spin-button,
+    input[type="number"]::-webkit-outer-spin-button {
+      opacity: 0.5;
+    }
+  }
+</style>
+
+<!--
+  ============================================================================
+  补充样式 — 无法用 Tailwind utility 表达的细节
+  ============================================================================
+-->
+<style>
+  /* CRT 扫描线覆盖层 — 使用 repeating-linear-gradient 模拟阴极射线管的扫描纹理 */
+  .crt-overlay {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 9999;
+    opacity: 0.03;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0, 0, 0, 0.15) 2px,
+      rgba(0, 0, 0, 0.15) 4px
+    );
+  }
+
+  /* ECharts 容器 */
+  #chart-container {
+    width: 100%;
+    flex: 1;
+    min-height: 0;
+  }
+
+  /* 日志控制台 — 终端风格的文本阴影 */
+  .log-console {
+    text-shadow: 0 0 2px oklch(0.85 0.15 200 / 0.3);
+  }
+
+  /* 参数卡片 — hover 时边框 glow */
+  .param-card {
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+  }
+
+  .param-card:hover {
+    border-color: oklch(0.85 0.15 200 / 0.4);
+    box-shadow: 0 0 12px oklch(0.85 0.15 200 / 0.1);
+  }
+
+  /* 玻璃态面板 — 毛玻璃效果 */
+  .glass-panel {
+    background: oklch(0.10 0.01 260 / 0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+
+  /* 按钮基础动效 */
+  .btn-glow {
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .btn-glow:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 20px oklch(0.85 0.15 200 / 0.3);
+  }
+
+  .btn-glow:active {
+    transform: translateY(1px);
+    box-shadow: 0 1px 4px oklch(0.85 0.15 200 / 0.2);
+  }
+
+  .btn-danger:hover {
+    box-shadow: 0 4px 20px oklch(0.65 0.25 20 / 0.4);
+  }
+
+  /* 参数 key-select：选中后隐藏文字（由覆盖层显示英文），下拉选项保留中文 */
+  .key-select {
+    color: transparent !important;
+    caret-color: transparent;
+  }
+  .key-select option {
+    color: oklch(0.90 0.01 260);
+    background: oklch(0.08 0.01 260);
+  }
+
+  /* 状态指示器动画 */
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+
+  .status-dot.idle {
+    background: var(--color-moon-dim);
+  }
+
+  .status-dot.running {
+    background: var(--color-neon-green);
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
+
+  .status-dot.stopping {
+    background: var(--color-neon-red);
+    animation: pulse-glow 0.5s ease-in-out infinite;
+  }
+
+  .status-dot.completed {
+    background: var(--color-neon-cyan);
+  }
+
+  .status-dot.error {
+    background: var(--color-neon-red);
+  }
+
+  /* 响应式 — 小于 1024px 时配置面板隐藏，通过汉堡菜单切换 */
+  @media (max-width: 1023px) {
+    #sidebar {
+      position: fixed;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      z-index: 50;
+      transform: translateX(-100%);
+      transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    #sidebar.open {
+      transform: translateX(0);
+    }
+  }
+</style>
+</head>
+
+<body class="flex flex-col h-screen bg-void-950 text-moon antialiased">
+
+  <!-- CRT 扫描线覆盖层 — 渲染阴极射线管的扫描纹理，营造复古未来主义氛围 -->
+  <div class="crt-overlay"></div>
+
+  <!--
+    =========================================================================
+    顶部导航栏
+    =========================================================================
+    左侧显示项目名称（Orbitron 字体 + 青色 glow），右侧显示连接状态指示灯。
+  -->
+  <header class="flex items-center justify-between px-5 py-3 bg-void-900 border-b border-titanium/40 shrink-0 z-10 relative">
+    <div class="flex items-center gap-3">
+      <div class="w-2.5 h-2.5 rounded-full bg-neon-cyan animate-pulse-glow"></div>
+      <h1 class="text-lg font-display font-bold tracking-widest text-neon-cyan" style="text-shadow: 0 0 20px oklch(0.85 0.15 200 / 0.4);">
+        LOOPED TRANSFORMER
+      </h1>
+      <span class="text-xs text-moon-dim font-mono tracking-wide hidden sm:inline">// 实时训练监控</span>
+    </div>
+
+    <div class="flex items-center gap-4">
+      <!-- 连接状态 -->
+      <div class="flex items-center gap-1.5">
+        <span id="ws-indicator" class="status-dot idle"></span>
+        <span id="ws-text" class="text-xs text-moon-dim font-mono">未连接</span>
+      </div>
+
+      <!-- 移动端汉堡菜单按钮 -->
+      <button id="menu-toggle" class="lg:hidden text-moon hover:text-neon-cyan transition-colors duration-200" title="切换配置面板">
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 5h14M3 10h14M3 15h14"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!--
+    =========================================================================
+    主体区域 — 双栏网格布局
+    =========================================================================
+    - 左侧: 实验配置面板 (320px 固定宽度，可滚动)
+    - 右侧: 图表区域 (flex-grow) + 日志控制台 (固定 200px)
+  -->
+  <main class="flex flex-1 min-h-0 relative">
+
+    <!--
+      =======================================================================
+      左侧 — 实验配置面板 (#sidebar)
+      =======================================================================
+      包含：
+      1. 全局 epochs 设置
+      2. "添加实验" 按钮
+      3. "加载基线实验" 下拉菜单
+      4. 动态增减的实验参数卡片列表
+      5. 控制按钮区 (启动 / 停止)
+    -->
+    <aside id="sidebar" class="bg-void-900/95 border-r border-titanium/30 flex flex-col overflow-hidden z-40" style="width: 320px; min-width: 280px; max-width: 500px; transition: width 0.2s ease, min-width 0.2s ease;">
+      <!-- 配置面板头部 -->
+      <div class="px-4 py-3 border-b border-titanium/20 shrink-0 flex items-center justify-between" id="config-header">
+        <h2 class="text-sm font-display font-semibold tracking-widest text-neon-purple uppercase cursor-pointer select-none">实验配置</h2>
+        <div class="flex items-center gap-1.5">
+          <button class="text-moon-dim hover:text-neon-cyan transition-colors duration-200 p-0.5" id="config-collapse-btn" title="折叠配置内容">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 5l4 4 4-4"/>
+            </svg>
+          </button>
+          <button class="text-moon-dim hover:text-neon-cyan transition-colors duration-200 p-0.5" id="sidebar-toggle" title="折叠/展开侧边栏">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M4 3l-3 5 3 5M11 2v12"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- 可滚动区域 -->
+      <div class="flex-1 overflow-y-auto px-3 py-3 space-y-3" id="sidebar-scroll">
+        <!-- 实验配置 (可折叠) -->
+        <div id="config-body">
+        <div class="space-y-3" id="config-scroll">
+
+        <!-- 全局高级配置 (Manual) — 默认包含 epochs 参数 -->
+        <div class="glass-panel rounded-panel border border-neon-purple/30 p-3 space-y-2">
+          <div class="flex items-center justify-between">
+            <label class="text-2xs font-display tracking-wider text-neon-purple uppercase">全局高级配置</label>
+            <button id="add-global-param-btn"
+              class="text-2xs font-mono text-neon-purple hover:text-neon-cyan transition-colors duration-200 px-1.5 py-0.5 border border-neon-purple/30 rounded-btn hover:border-neon-cyan/50 bg-neon-purple/10 hover:bg-neon-cyan/10">
+              + 添加参数
+            </button>
+          </div>
+          <div id="global-params-container" class="space-y-1.5">
+            <!-- 动态 Key-Value 行 -->
+          </div>
+        </div>
+
+        <!-- 操作按钮行 -->
+        <div class="flex gap-2">
+          <button id="add-experiment-btn"
+            class="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-void-800 border border-neon-cyan/20 rounded-btn
+                   text-xs font-display tracking-wider text-neon-cyan hover:border-neon-cyan/60 hover:bg-neon-cyan/5
+                   active:scale-95 transition-all duration-200 uppercase">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M7 2v10M2 7h10"/>
+            </svg>
+            添加实验
+          </button>
+        </div>
+
+        <!-- 基线实验下拉 -->
+        <div class="flex gap-2">
+          <select id="baseline-select"
+            class="flex-1 bg-void-950 border border-neon-cyan/20 rounded-btn px-3 py-2 text-xs font-mono text-neon-cyan
+                   focus:outline-none focus:border-neon-cyan/60 focus:ring-1 focus:ring-neon-cyan/30 transition-all duration-200">
+            <option value="">— 一键加载基线实验 —</option>
+          </select>
+          <button id="load-baseline-btn"
+            class="px-3 py-2 bg-neon-cyan/10 border border-neon-cyan/30 rounded-btn text-xs font-display tracking-wider
+                   text-neon-cyan hover:border-neon-cyan/60 hover:bg-neon-cyan/20
+                   active:scale-95 transition-all duration-200 uppercase">
+            加载
+          </button>
+          <button id="clear-all-btn"
+            class="px-3 py-2 bg-void-800 border border-neon-red/15 rounded-btn text-xs font-display tracking-wider
+                   text-moon-dim hover:text-neon-red hover:border-neon-red/40 hover:bg-neon-red/5
+                   active:scale-95 transition-all duration-200 uppercase">
+            清空
+          </button>
+        </div>
+
+        <!-- 动态实验参数卡片容器 -->
+        <div id="experiments-container" class="space-y-3">
+          <!-- 默认一个空实验 -->
+        </div>
+
+      </div><!-- /#config-scroll -->
+      </div><!-- /#config-body -->
+
+        <!-- 绘图指标头部 — 分隔线 + 折叠按钮 -->
+        <div class="pt-1">
+          <div class="border-t border-titanium/20 px-1 py-3 flex items-center justify-between cursor-pointer" id="metrics-header">
+            <h2 class="text-sm font-display font-semibold tracking-widest text-neon-green uppercase">绘图指标</h2>
+            <button class="text-moon-dim hover:text-neon-cyan transition-colors duration-200" id="metrics-collapse-btn" title="折叠/展开">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 5l4 4 4-4"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="space-y-3" id="metrics-body">
+          <!-- Compare 开关 — 与全局 Epochs 相同的 glass-panel 格式 -->
+          <div class="glass-panel rounded-panel border border-titanium/20 p-3 space-y-1.5">
+            <label class="text-2xs font-display tracking-wider text-moon-dim uppercase">Compare 模式</label>
+            <button id="compare-toggle" data-value="True"
+              class="text-xs font-mono px-3 py-1.5 rounded-btn border transition-all duration-200 w-full text-center bg-neon-cyan/15 border-neon-cyan/40 text-neon-cyan hover:bg-neon-cyan/25">
+              横向对比 (ON)
+            </button>
+          </div>
+          <!-- 添加/清空图表组按钮 -->
+          <div class="flex gap-2">
+            <button id="add-plot-group-btn"
+              class="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-void-800 border border-neon-green/20 rounded-btn
+                     text-xs font-display tracking-wider text-neon-green hover:border-neon-green/60 hover:bg-neon-green/5
+                     active:scale-95 transition-all duration-200 uppercase">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M7 2v10M2 7h10"/>
+              </svg>
+              添加图表组
+            </button>
+            <button id="clear-metrics-btn"
+              class="px-3 py-2 bg-void-800 border border-neon-red/15 rounded-btn text-xs font-display tracking-wider
+                     text-moon-dim hover:text-neon-red hover:border-neon-red/40 hover:bg-neon-red/5
+                     active:scale-95 transition-all duration-200 uppercase">
+              清空
+            </button>
+          </div>
+          <div id="plot-groups-container" class="space-y-3">
+            <!-- 默认一个图表组卡片 -->
+          </div>
+        </div><!-- /#metrics-body -->
+
+      </div><!-- /#sidebar-scroll -->
+
+      <!-- 控制按钮区 (固定在底部) -->
+      <div class="px-3 py-3 border-t border-titanium/20 shrink-0 space-y-2">
+        <!-- 训练状态文字 -->
+        <div class="flex items-center gap-2">
+          <span id="status-dot-sidebar" class="status-dot idle"></span>
+          <span id="status-text-sidebar" class="text-xs text-moon-dim font-mono">就绪</span>
+        </div>
+
+        <!-- 启动 / 终止 按钮 -->
+        <div class="flex gap-2">
+          <button id="start-btn"
+            class="btn-glow flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 bg-neon-cyan/15 border border-neon-cyan/40
+                   rounded-btn text-sm font-display font-semibold tracking-wider text-neon-cyan
+                   hover:bg-neon-cyan/25 active:scale-95 transition-all duration-200 uppercase
+                   disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-neon-cyan/15">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M5 3l9 5-9 5V3z"/>
+            </svg>
+            启动训练
+          </button>
+
+          <button id="stop-btn"
+            class="btn-glow btn-danger flex items-center justify-center gap-1.5 px-4 py-2.5 bg-neon-red/10 border border-neon-red/30
+                   rounded-btn text-sm font-display font-semibold tracking-wider text-neon-red
+                   hover:bg-neon-red/20 hover:border-neon-red/50 active:scale-95 transition-all duration-200 uppercase
+                   disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-neon-red/10"
+            disabled>
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
+              <rect x="2" y="2" width="10" height="10" rx="1"/>
+            </svg>
+            终止训练
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 可拖动分隔线 -->
+    <div id="splitter" class="w-1.5 shrink-0 bg-titanium/20 hover:bg-neon-cyan/40 cursor-col-resize transition-colors duration-150 relative z-30"></div>
+
+    <!--
+      =======================================================================
+      右侧 — 监控大屏
+      =======================================================================
+      上半部分: ECharts 实时 Loss 曲线图
+      下半部分: 终端风格日志控制台
+    -->
+    <section class="flex-1 flex flex-col min-w-0 min-h-0">
+
+      <!-- 顶部工具栏 — 始终可见，统一控制全部图表 -->
+      <div id="chart-toolbar" class="flex items-center justify-between px-4 py-1.5 border-b border-titanium/20 bg-void-900 shrink-0">
+        <div class="flex items-center gap-2">
+          <button id="sidebar-expand-btn" class="hidden text-moon-dim hover:text-neon-cyan transition-colors duration-200 p-0.5" title="展开侧边栏">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M9 3l3 5-3 5M5 2v12"/>
+            </svg>
+          </button>
+          <span class="text-2xs font-display tracking-wider text-moon-dim uppercase">Monitor</span>
+        </div>
+        <div id="smoothing-bar" class="flex items-center gap-2 opacity-0 transition-opacity duration-300 pointer-events-none">
+          <span class="text-2xs font-mono text-moon-dim whitespace-nowrap">SMOOTH</span>
+          <input id="smoothing-slider" type="range" min="0" max="0.99" step="0.01" value="0"
+            class="w-20 h-1 accent-neon-cyan cursor-pointer">
+          <span id="smoothing-value" class="text-2xs font-mono text-neon-cyan w-8 text-right">.00</span>
+          <span class="text-titanium/30 mx-0.5">|</span>
+          <button id="export-chart-btn" title="导出当前图表"
+            class="text-2xs font-mono text-moon-dim hover:text-neon-cyan transition-colors duration-200">
+            下载PNG
+          </button>
+        </div>
+      </div>
+
+      <!-- 可滚动内容区：图表 + 结果 + 日志 -->
+      <div class="flex-1 overflow-y-auto flex flex-col min-h-0" id="right-scroll">
+
+        <!-- ECharts 实时图表区 -->
+        <div class="relative bg-void-950 shrink-0" style="height: 420px;" id="chart-wrapper">
+          <div id="chart-placeholder" class="absolute inset-0 flex flex-col items-center justify-center text-moon-dim/40 select-none pointer-events-none">
+            <svg width="64" height="64" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3">
+              <path d="M8 56 L8 16 L24 8 L40 8 L56 24 L56 56 Z"/>
+              <path d="M24 8 L24 24 L56 24"/>
+              <line x1="20" y1="38" x2="44" y2="38"/>
+              <line x1="20" y1="46" x2="36" y2="46"/>
+            </svg>
+            <p class="mt-4 text-xs font-mono tracking-wider">等待实验数据...</p>
+            <p class="mt-1 text-2xs font-mono">启动训练后 Loss 曲线将在此实时渲染</p>
+          </div>
+          <div id="chart-container" class="w-full h-full"></div>
+        </div>
+
+        <!-- 训练结果 — 原地展示，无弹窗 -->
+        <div id="results-inline" class="hidden border-t border-titanium/30 bg-void-900">
+          <div id="results-inline-content" class="p-4 space-y-5">
+            <!-- 动态填充摘要表格 + Matplotlib 图片 + 下载按钮 -->
+          </div>
+        </div>
+
+        <!-- 日志控制台 — CRT 终端风格，固定高度 -->
+        <div class="border-t border-titanium/30 bg-void-900 flex flex-col shrink-0" style="min-height: 180px; max-height: 240px;">
+          <div class="flex items-center justify-between px-4 py-2 border-b border-titanium/20 shrink-0">
+            <div class="flex items-center gap-2">
+              <div class="flex gap-1">
+                <span class="w-2 h-2 rounded-full bg-neon-red/60"></span>
+                <span class="w-2 h-2 rounded-full bg-neon-green/60"></span>
+                <span class="w-2 h-2 rounded-full bg-neon-cyan/60"></span>
+              </div>
+              <span class="text-2xs font-mono tracking-wider text-moon-dim ml-2">TERMINAL // OUTPUT LOG</span>
+            </div>
+            <button id="clear-log-btn" class="text-2xs text-moon-dim hover:text-neon-cyan transition-colors duration-200 font-mono">
+              CLEAR
+            </button>
+          </div>
+          <div id="log-console" class="flex-1 overflow-y-auto px-4 py-2 font-mono text-xs leading-relaxed log-console space-y-0.5">
+            <div class="text-moon-dim/50 italic">// 系统就绪，等待训练任务...</div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+  </main>
+
+  <!--
+    =========================================================================
+    Vanilla JS — 核心交互逻辑
+    =========================================================================
+  -->
+  <script>
+    // =========================================================================
+    // 全局状态
+    // =========================================================================
+    const STATE = {
+      ws: null,                  // WebSocket 实例
+      wsConnected: false,        // 连接状态
+      heartbeatTimer: null,      // 心跳定时器
+      reconnectTimer: null,      // 重连定时器
+      reconnectAttempts: 0,      // 重连次数
+      maxReconnectAttempts: 10,  // 最大重连次数
+      trainingStatus: 'idle',    // idle | running | stopping | completed | error
+      experimentCount: 1,        // 当前实验配置数量
+      experimentCounter: 0,      // 用于生成唯一 ID
+      chart: null,               // ECharts 实例
+      chartData: {},             // { experimentIndex: { epochs: [], losses: [] } }
+      totalExperiments: 0,       // 训练中的实验总数
+      currentExperiment: 0,      // 当前正在训练的 experiment index
+      resultImages: [],          // 训练结果 Base64 图片
+      smoothing: 0.0,            // EMA 平滑系数 (0=无平滑, 0.99=极强平滑)
+    };
+
+    // =========================================================================
+    // DOM 引用缓存
+    // =========================================================================
+    const $ = (sel) => document.querySelector(sel);
+    const $$ = (sel) => document.querySelectorAll(sel);
+
+    const DOM = {
+      sidebar: $('#sidebar'),
+      menuToggle: $('#menu-toggle'),
+      wsIndicator: $('#ws-indicator'),
+      wsText: $('#ws-text'),
+      statusDotSidebar: $('#status-dot-sidebar'),
+      statusTextSidebar: $('#status-text-sidebar'),
+      startBtn: $('#start-btn'),
+      stopBtn: $('#stop-btn'),
+      experimentsContainer: $('#experiments-container'),
+      addExperimentBtn: $('#add-experiment-btn'),
+      baselineSelect: $('#baseline-select'),
+      loadBaselineBtn: $('#load-baseline-btn'),
+      globalParamsContainer: $('#global-params-container'),
+      addGlobalParamBtn: $('#add-global-param-btn'),
+      clearAllBtn: $('#clear-all-btn'),
+      plotGroupsContainer: $('#plot-groups-container'),
+      addPlotGroupBtn: $('#add-plot-group-btn'),
+      clearMetricsBtn: $('#clear-metrics-btn'),
+      compareToggle: $('#compare-toggle'),
+      configHeader: $('#config-header'),
+      configCollapseBtn: $('#config-collapse-btn'),
+      configBody: $('#config-body'),
+      metricsHeader: $('#metrics-header'),
+      metricsCollapseBtn: $('#metrics-collapse-btn'),
+      metricsBody: $('#metrics-body'),
+      chartContainer: $('#chart-container'),
+      chartPlaceholder: $('#chart-placeholder'),
+      smoothingSlider: $('#smoothing-slider'),
+      smoothingValue: $('#smoothing-value'),
+      smoothingBar: $('#smoothing-bar'),
+      exportChartBtn: $('#export-chart-btn'),
+      logConsole: $('#log-console'),
+      clearLogBtn: $('#clear-log-btn'),
+      resultsInline: $('#results-inline'),
+      resultsInlineContent: $('#results-inline-content'),
+    };
+
+    // =========================================================================
+    // WebSocket 连接管理
+    // =========================================================================
+    function connectWebSocket() {
+      if (STATE.ws && STATE.ws.readyState === WebSocket.OPEN) return;
+
+      const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      const host = window.location.host;
+      const url = `${protocol}://${host}/ws`;
+
+      try {
+        STATE.ws = new WebSocket(url);
+      } catch (e) {
+        console.error('WebSocket 创建失败:', e);
+        scheduleReconnect();
+        return;
+      }
+
+      STATE.ws.onopen = () => {
+        STATE.wsConnected = true;
+        STATE.reconnectAttempts = 0;
+        updateConnectionIndicator('connected');
+        startHeartbeat();
+        appendLog('// WebSocket 连接已建立');
+      };
+
+      STATE.ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          handleMessage(data);
+        } catch (e) {
+          // 非 JSON 消息忽略
+        }
+      };
+
+      STATE.ws.onclose = (event) => {
+        STATE.wsConnected = false;
+        updateConnectionIndicator('disconnected');
+        stopHeartbeat();
+        if (STATE.trainingStatus === 'running' || STATE.trainingStatus === 'stopping') {
+          appendLog('// ⚠ WebSocket 连接断开，训练仍在后台继续...');
+        }
+        if (!event.wasClean) {
+          scheduleReconnect();
+        }
+      };
+
+      STATE.ws.onerror = () => {
+        STATE.wsConnected = false;
+        updateConnectionIndicator('error');
+      };
+    }
+
+    function scheduleReconnect() {
+      if (STATE.reconnectAttempts >= STATE.maxReconnectAttempts) {
+        appendLog('// ⚠ 达到最大重连次数，请检查服务状态');
+        return;
+      }
+      STATE.reconnectAttempts++;
+      const delay = Math.min(1000 * Math.pow(2, STATE.reconnectAttempts), 30000);
+      appendLog(`// 将在 ${delay / 1000}s 后尝试重连 (${STATE.reconnectAttempts}/${STATE.maxReconnectAttempts})`);
+      STATE.reconnectTimer = setTimeout(connectWebSocket, delay);
+    }
+
+    function startHeartbeat() {
+      STATE.heartbeatTimer = setInterval(() => {
+        if (STATE.ws && STATE.ws.readyState === WebSocket.OPEN) {
+          STATE.ws.send('ping');
+        }
+      }, 15000);
+    }
+
+    function stopHeartbeat() {
+      if (STATE.heartbeatTimer) {
+        clearInterval(STATE.heartbeatTimer);
+        STATE.heartbeatTimer = null;
+      }
+    }
+
+    function updateConnectionIndicator(status) {
+      const dot = DOM.wsIndicator;
+      const text = DOM.wsText;
+      dot.className = 'status-dot';
+      switch (status) {
+        case 'connected':
+          dot.classList.add('running');
+          text.textContent = '已连接';
+          text.style.color = 'oklch(0.78 0.18 160)';
+          break;
+        case 'disconnected':
+          dot.classList.add('idle');
+          text.textContent = '断开';
+          text.style.color = '';
+          break;
+        case 'error':
+          dot.classList.add('error');
+          text.textContent = '错误';
+          text.style.color = 'oklch(0.65 0.25 20)';
+          break;
+      }
+    }
+
+    // =========================================================================
+    // 消息处理
+    // =========================================================================
+    function handleMessage(data) {
+      switch (data.type) {
+        case 'epoch':
+          handleEpochData(data);
+          break;
+        case 'log':
+          appendLog(data.text);
+          break;
+        case 'status':
+          handleStatusUpdate(data);
+          break;
+        case 'full_log':
+          // 完整日志在训练结束后回放（可选）
+          break;
+        case 'pong':
+          // 心跳回复
+          break;
+        case 'ping':
+          // 服务端心跳
+          if (STATE.ws && STATE.ws.readyState === WebSocket.OPEN) {
+            STATE.ws.send('pong');
+          }
+          break;
+        case 'state':
+          // 初始状态同步
+          break;
+        case 'experiment_start':
+          STATE.currentExperiment = data.experiment || 0;
+          appendLog(`// ${data.text}`);
+          break;
+        case 'experiment_done':
+          appendLog(`// Exp ${(data.experiment || 0) + 1}/${data.total || '?'} 完成 ✓`);
+          break;
+        default:
+          break;
+      }
+    }
+
+    function handleEpochData(data) {
+      const { epoch, total_epochs, loss, experiment, total_experiments } = data;
+      STATE.totalExperiments = total_experiments || STATE.totalExperiments;
+      STATE.currentExperiment = experiment ?? STATE.currentExperiment;
+
+      // 更新图表数据
+      const expKey = `exp_${experiment ?? 0}`;
+      if (!STATE.chartData[expKey]) {
+        STATE.chartData[expKey] = { epochs: [], losses: [], name: `Exp ${(experiment ?? 0) + 1}` };
+      }
+      STATE.chartData[expKey].epochs.push(epoch);
+      STATE.chartData[expKey].losses.push(loss);
+
+      // 更新状态文字
+      const expLabel = STATE.totalExperiments > 1 ? `Exp ${(experiment ?? 0) + 1}/${STATE.totalExperiments} · ` : '';
+      DOM.statusTextSidebar.textContent = `${expLabel}Epoch ${epoch}/${total_epochs} · Loss ${loss.toFixed(4)}`;
+
+      // 刷新图表
+      refreshChart();
+    }
+
+    function handleStatusUpdate(data) {
+      STATE.trainingStatus = data.status;
+
+      switch (data.status) {
+        case 'initializing':
+          DOM.statusDotSidebar.className = 'status-dot running';
+          DOM.statusTextSidebar.textContent = data.message;
+          DOM.startBtn.disabled = true;
+          DOM.stopBtn.disabled = true;
+          break;
+
+        case 'running':
+          DOM.statusDotSidebar.className = 'status-dot running';
+          DOM.statusTextSidebar.textContent = data.message;
+          DOM.startBtn.disabled = true;
+          DOM.stopBtn.disabled = false;
+          STATE.totalExperiments = data.total_experiments || STATE.totalExperiments;
+          // 初始化图表数据存储
+          STATE.chartData = {};
+          for (let i = 0; i < STATE.totalExperiments; i++) {
+            STATE.chartData[`exp_${i}`] = { epochs: [], losses: [], name: `Exp ${i + 1}` };
+          }
+          // 训练中隐藏平滑滑块
+          DOM.smoothingBar.style.opacity = '0';
+          DOM.smoothingBar.style.pointerEvents = 'none';
+          break;
+
+        case 'completed':
+          DOM.statusDotSidebar.className = 'status-dot completed';
+          DOM.statusTextSidebar.textContent = data.message;
+          DOM.startBtn.disabled = false;
+          DOM.stopBtn.disabled = true;
+          // 训练完成后显示平滑滑块
+          DOM.smoothingBar.style.opacity = '1';
+          DOM.smoothingBar.style.pointerEvents = 'auto';
+          fetchResults();
+          appendLog(`// ✓ ${data.message}`);
+          break;
+
+        case 'stopped':
+          DOM.statusDotSidebar.className = 'status-dot idle';
+          DOM.statusTextSidebar.textContent = data.message;
+          DOM.startBtn.disabled = false;
+          DOM.stopBtn.disabled = true;
+          // 训练停止后显示平滑滑块
+          DOM.smoothingBar.style.opacity = '1';
+          DOM.smoothingBar.style.pointerEvents = 'auto';
+          fetchResults();
+          appendLog(`// ⊘ ${data.message}`);
+          break;
+
+        case 'error':
+          DOM.statusDotSidebar.className = 'status-dot error';
+          DOM.statusTextSidebar.textContent = data.message;
+          DOM.startBtn.disabled = false;
+          DOM.stopBtn.disabled = true;
+          appendLog(`// ✗ ${data.message}`);
+          break;
+
+        case 'stopping':
+          DOM.statusDotSidebar.className = 'status-dot stopping';
+          DOM.statusTextSidebar.textContent = data.message;
+          DOM.startBtn.disabled = true;
+          DOM.stopBtn.disabled = true;
+          break;
+      }
+    }
+
+    // =========================================================================
+    // ECharts 图表
+    // =========================================================================
+    function initChart() {
+      const container = DOM.chartContainer;
+      if (!container) return;
+
+      STATE.chart = echarts.init(container, null, {
+        backgroundColor: 'transparent',
+        devicePixelRatio: window.devicePixelRatio || 1,
+      });
+      // 固定高度容器需手动 resize
+      container.style.width = '100%';
+      container.style.height = '100%';
+      STATE.chart.resize();
+
+      const option = getChartOption();
+      STATE.chart.setOption(option);
+
+      // 响应式缩放
+      window.addEventListener('resize', () => {
+        STATE.chart && STATE.chart.resize();
+      });
+    }
+
+    function getChartOption() {
+      return {
+        textStyle: {
+          fontFamily: 'JetBrains Mono, monospace',
+        },
+        grid: {
+          left: 60,
+          right: 40,
+          top: 50,
+          bottom: 40,
+        },
+        xAxis: {
+          type: 'value',
+          min: 'dataMin',   // 从第一个数据点开始，消除 0~1 空白
+          name: 'Epoch',
+          nameLocation: 'center',
+          nameGap: 30,
+          nameTextStyle: {
+            color: 'oklch(0.60 0.02 260)',
+            fontSize: 11,
+            fontFamily: 'Orbitron, sans-serif',
+            fontWeight: 500,
+          },
+          axisLine: {
+            lineStyle: { color: 'oklch(0.25 0.02 260)' },
+          },
+          axisTick: { show: false },
+          axisLabel: {
+            color: 'oklch(0.50 0.02 260)',
+            fontSize: 10,
+          },
+          splitLine: {
+            lineStyle: {
+              color: 'oklch(0.25 0.02 260 / 0.3)',
+              type: 'dashed',
+            },
+          },
+        },
+        yAxis: {
+          type: 'value',
+          name: 'Loss',
+          nameTextStyle: {
+            color: 'oklch(0.60 0.02 260)',
+            fontSize: 11,
+            fontFamily: 'Orbitron, sans-serif',
+            fontWeight: 500,
+          },
+          axisLine: {
+            lineStyle: { color: 'oklch(0.25 0.02 260)' },
+          },
+          axisTick: { show: false },
+          axisLabel: {
+            color: 'oklch(0.50 0.02 260)',
+            fontSize: 10,
+            formatter: (v) => v.toFixed(4),
+          },
+          splitLine: {
+            lineStyle: {
+              color: 'oklch(0.25 0.02 260 / 0.3)',
+              type: 'dashed',
+            },
+          },
+        },
+        legend: {
+          top: 8,
+          textStyle: {
+            color: 'oklch(0.60 0.02 260)',
+            fontSize: 10,
+            fontFamily: 'JetBrains Mono, monospace',
+          },
+          itemWidth: 16,
+          itemHeight: 2,
+        },
+        tooltip: {
+          trigger: 'axis',
+          backgroundColor: 'oklch(0.12 0.015 260 / 0.95)',
+          borderColor: 'oklch(0.85 0.15 200 / 0.3)',
+          borderWidth: 1,
+          textStyle: {
+            color: 'oklch(0.90 0.01 260)',
+            fontSize: 11,
+            fontFamily: 'JetBrains Mono, monospace',
+          },
+          formatter: (params) => {
+            if (!params || params.length === 0) return '';
+            let html = '';
+            params.forEach((p, i) => {
+              if (i > 0) html += '<br/>';
+              html += `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};margin-right:6px;"></span>`;
+              html += `${p.seriesName}: <b>${Number(p.value[1]).toFixed(6)}</b>`;
+            });
+            return html;
+          },
+        },
+        // 8 条霓虹配色（匹配 Matplotlib 后端配色）
+        color: [
+          '#00f0ff', '#b400ff', '#00ff88', '#ff6b6b',
+          '#ffd93d', '#6c5ce7', '#a29bfe', '#fd79a8',
+        ],
+        series: [],
+      };
+    }
+
+    function refreshChart() {
+      if (!STATE.chart) return;
+
+      // 隐藏占位符，显示平滑滑块
+      DOM.chartPlaceholder.style.display = 'none';
+      DOM.smoothingBar.style.opacity = '1';
+      DOM.smoothingBar.style.pointerEvents = 'auto';
+
+      const w = STATE.smoothing;
+      const series = [];
+      const legendData = [];
+      const accentColors = [
+        '#00f0ff', '#b400ff', '#00ff88', '#ff6b6b',
+        '#ffd93d', '#6c5ce7', '#a29bfe', '#fd79a8',
+      ];
+
+      let idx = 0;
+      for (const [key, data] of Object.entries(STATE.chartData)) {
+        if (data.epochs.length === 0) continue;
+
+        const color = accentColors[idx % accentColors.length];
+        const rawData = data.epochs.map((e, i) => [e, data.losses[i]]);
+
+        // ——— 计算 EMA 平滑 ———
+        // ema[t] = ema[t-1] * w + raw[t] * (1 - w)
+        let last = data.losses[0];
+        const smoothed = [last];
+        for (let i = 1; i < data.losses.length; i++) {
+          last = last * w + data.losses[i] * (1 - w);
+          smoothed.push(last);
+        }
+        const emaData = data.epochs.map((e, i) => [e, smoothed[i]]);
+
+        // ——— 原始数据线（极暗灰、极淡，隐藏图例，背景底纹）———
+        series.push({
+          name: '__raw_' + key,
+          type: 'line',
+          data: rawData,
+          smooth: false,
+          symbol: 'none',
+          lineStyle: { width: 1, color: 'oklch(0.2 0.01 260)', opacity: 0.12 },
+          showSymbol: false,
+          legendHoverLink: false,
+          silent: true,
+        });
+
+        // ——— EMA 平滑线（粗、亮色、平滑、发光）———
+        legendData.push(data.name);
+        series.push({
+          name: data.name,
+          type: 'line',
+          data: emaData,
+          smooth: true,
+          symbol: 'none',
+          lineStyle: {
+            width: 2.5,
+            color: color,
+            shadowBlur: 10,
+            shadowColor: color,
+            shadowOffsetX: 0,
+            shadowOffsetY: 0,
+          },
+          areaStyle: {
+            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+              { offset: 0, color: color + '30' },
+              { offset: 1, color: color + '05' },
+            ]),
+          },
+          emphasis: {
+            focus: 'series',
+            lineStyle: { width: 4 },
+          },
+        });
+
+        idx++;
+      }
+
+      STATE.chart.setOption({
+        series,
+        legend: { data: legendData },
+      }, { notMerge: false });
+    }
+
+    // =========================================================================
+    // 日志控制台
+    // =========================================================================
+    function appendLog(text) {
+      const entry = document.createElement('div');
+      entry.className = 'animate-log-entry';
+      entry.style.color = getLogColor(text);
+      entry.textContent = text;
+      DOM.logConsole.appendChild(entry);
+
+      // 自动滚动到底部
+      DOM.logConsole.scrollTop = DOM.logConsole.scrollHeight;
+
+      // 限制日志条数（保留最近 500 条）
+      while (DOM.logConsole.children.length > 500) {
+        DOM.logConsole.removeChild(DOM.logConsole.firstChild);
+      }
+    }
+
+    function getLogColor(text) {
+      if (text.startsWith('//') || text.startsWith('#')) return 'oklch(0.50 0.02 260)';
+      if (text.includes('⚠') || text.includes('Error') || text.includes('error')) return 'oklch(0.65 0.25 20)';
+      if (text.includes('✓') || text.includes('completed') || text.includes('完成')) return 'oklch(0.78 0.18 160)';
+      if (text.includes('Epoch') || text.includes('Loss')) return 'oklch(0.85 0.15 200)';
+      if (text.includes('显存') || text.includes('VRAM') || text.includes('GPU')) return 'oklch(0.65 0.22 300)';
+      return 'oklch(0.75 0.01 260)';
+    }
+
+    // =========================================================================
+    // 统一参数 Schema — 所有可用参数的元数据
+    // =========================================================================
+    // category: 'init' | 'train'    用于 optgroup 分组
+    // type:     'select' | 'number' | 'bool'
+    // options:  仅 select 类型需要，格式 [[value, label], ...]
+    // order:    组内排序权重（越小越靠前）
+    const PARAM_SCHEMA = {
+      // ── Init Parameters — 严格按 default_setup() 顺序 ──
+      'b_rope_or_upe':      { category:'init', label:'b_rope_or_upe  (RoPE/UPE基数)',          type:'number', default:10000,  order:1 },
+      'head_ratio_upe':     { category:'init', label:'head_ratio_upe (UPE头比例)',             type:'number', default:2,      order:2 },
+      'num_heads':          { category:'init', label:'num_heads  (注意力头数)',                 type:'number', default:8,      order:3 },
+      'd_model':            { category:'init', label:'d_model  (模型维度)',                    type:'number', default:256,    order:4 },
+      'max_seq_len':        { category:'init', label:'max_seq_len  (最大序列长度)',             type:'number', default:100,    order:5 },
+      'pe_type':            { category:'init', label:'pe_type  (位置编码类型)',                 type:'select', options:[['["learned_ape"]','Learned APE'],['["ape"]','APE'],['["rope"]','RoPE'],['["ms_upe"]','MS-UPE'],['["alibi"]','ALiBi']], default:'["learned_ape"]', order:6 },
+      'norm_type':          { category:'init', label:'norm_type  (归一化类型)',                 type:'select', options:[['layernorm','LayerNorm'],['rmsnorm','RMSNorm']], default:'layernorm', order:7 },
+      'ffn_type':           { category:'init', label:'ffn_type  (FFN激活函数)',                type:'select', options:[['gelu','GELU'],['swiglu','SwiGLU']], default:'gelu', order:8 },
+      'num_blocks':         { category:'init', label:'num_blocks  (Transformer层数)',          type:'number', default:20,     order:9 },
+      'loop':               { category:'init', label:'loop  (权重共享)',                       type:'bool',   default:true,  order:10 },
+      'residual_gate_type': { category:'init', label:'residual_gate_type  (残差门控类型)',       type:'select', options:[['fixed','Fixed'],['learnable_scalar','Learnable Scalar'],['learnable_vector','Learnable Vector']], default:'fixed', order:11 },
+      'd_x':                { category:'init', label:'d_x  (输入特征维度)',                    type:'number', default:20,     order:12 },
+      'd_y':                { category:'init', label:'d_y  (输出标签维度)',                    type:'number', default:1,      order:13 },
+      'bias':               { category:'init', label:'bias  (回归头偏置)',                     type:'bool',   default:false, order:14 },
+      'init_scale':         { category:'init', label:'init_scale  (回归头初始化缩放)',          type:'number', default:null,   order:15 },
+      'loss_type':          { category:'init', label:'loss_type  (损失函数)',                  type:'select', options:[['mse','MSE'],['l1','L1']], default:'mse', order:16 },
+      'lr':                 { category:'init', label:'lr  (学习率)',                           type:'number', default:0.0001, order:17 },
+      'gate_lr_ratio':      { category:'init', label:'gate_lr_ratio  (门控LR倍数)',            type:'number', default:100,    order:18 },
+      'seed':               { category:'init', label:'seed  (随机种子)',                       type:'number', default:42,     order:19 },
+      'timing':             { category:'init', label:'timing  (打印初始化耗时)',                type:'bool',   default:true,  order:20 },
+      'optimizer_type':     { category:'init', label:'optimizer_type  (优化器)',               type:'select', options:[['adam','Adam'],['sgd','SGD'],['adamw','AdamW']], default:'adam', order:21 },
+      'wd_adamw':           { category:'init', label:'wd_adamw  (AdamW权重衰减)',              type:'number', default:0.01,   order:22 },
+
+      // ── Train Parameters — 严格按 default_setup() 顺序 ──
+      'batch_size':         { category:'train', label:'batch_size  (批次大小)',               type:'number', default:64,     order:1 },
+      'seq_len':            { category:'train', label:'seq_len  (序列长度)',                   type:'number', default:80,     order:2 },
+      'num_eff':            { category:'train', label:'num_eff  (有效层数)',                   type:'number', default:15,     order:3 },
+      'sink_padding':       { category:'train', label:'sink_padding  (Sink Token组数)',        type:'number', default:null,   order:4 },
+      'epochs':             { category:'train', label:'epochs  (训练轮数)',                    type:'number', default:20,     order:5 },
+      'data_type':          { category:'train', label:'data_type  (回归数据类型)',              type:'select', options:[['linear','Linear']], default:'linear', order:6 },
+      'scheduler_type':     { category:'train', label:'scheduler_type  (学习率调度器)',         type:'select', options:[['None','None'],['cosine','Cosine'],['step','Step LR']], default:'None', order:7 },
+      'lr_scale':           { category:'train', label:'lr_scale  (LR调度器缩放因子)',           type:'number', default:0.1,    order:8 },
+      'step_size_scheduler':{ category:'train', label:'step_size_scheduler  (StepLR步长)',     type:'number', default:10,     order:9 },
+      'scheduled_training': { category:'train', label:'scheduled_training  (渐进训练)',        type:'bool',   default:true,  order:10 },
+    };
+
+    // 按 category + order 排序的参数 key 列表
+    const PARAM_KEYS_ORDERED = Object.keys(PARAM_SCHEMA).sort((a, b) => {
+      const sa = PARAM_SCHEMA[a], sb = PARAM_SCHEMA[b];
+      const catOrder = { init: 0, train: 1 };
+      const ca = catOrder[sa.category] ?? 2, cb = catOrder[sb.category] ?? 2;
+      if (ca !== cb) return ca - cb;
+      return (sa.order || 99) - (sb.order || 99);
+    });
+
+    // Init / Train 分组（供 optgroup 标签使用）
+    const PARAM_GROUPS = { init: [], train: [] };
+    PARAM_KEYS_ORDERED.forEach(k => {
+      const cat = PARAM_SCHEMA[k].category;
+      if (PARAM_GROUPS[cat]) PARAM_GROUPS[cat].push(k);
+    });
+
+    // =========================================================================
+    // 指标配置 Schema
+    // =========================================================================
+    const METRIC_SCHEMA = {
+      epoch: [
+        ['loss_history', 'loss_history'],
+        ['y_pred_norm_history', 'y_pred_norm_history'],
+        ['y_true_norm_history', 'y_true_norm_history'],
+        ['y_norm_error_history', 'y_norm_error_history'],
+        ['residual_gate_history_a', 'residual_gate_history_a'],
+        ['residual_gate_history_b', 'residual_gate_history_b'],
+        ['residual_gate_history_a_mean', 'residual_gate_history_a_mean'],
+        ['residual_gate_history_b_mean', 'residual_gate_history_b_mean'],
+        ['residual_gate_history_a_relative', 'residual_gate_history_a_relative'],
+        ['residual_gate_history_b_relative', 'residual_gate_history_b_relative'],
+        ['residual_gate_history_a_mean_relative', 'residual_gate_history_a_mean_relative'],
+        ['residual_gate_history_b_mean_relative', 'residual_gate_history_b_mean_relative'],
+        ['residual_gate_history_a_std', 'residual_gate_history_a_std'],
+        ['residual_gate_history_b_std', 'residual_gate_history_b_std'],
+        ['captured_attention', 'captured_attention'],
+      ],
+      experiment: [
+        ['final_loss', 'final_loss'],
+        ['final_y_pred_norm', 'final_y_pred_norm'],
+        ['final_y_true_norm', 'final_y_true_norm'],
+        ['final_residual_gate_a', 'final_residual_gate_a'],
+        ['final_residual_gate_b', 'final_residual_gate_b'],
+        ['final_residual_gate_a_mean', 'final_residual_gate_a_mean'],
+        ['final_residual_gate_b_mean', 'final_residual_gate_b_mean'],
+        ['final_residual_gate_a_std', 'final_residual_gate_a_std'],
+        ['final_residual_gate_b_std', 'final_residual_gate_b_std'],
+        ['init_time', 'init_time'],
+        ['train_time', 'train_time'],
+      ],
+    };
+
+    // =========================================================================
+    // updateBoolToggle — 更新 ON/OFF 按钮的外观
+    // =========================================================================
+    function updateBoolToggle(btn) {
+      const base = 'text-2xs font-mono px-2 py-0.5 rounded-btn border transition-all duration-200 w-16 text-center';
+      btn.className = base;
+      if (btn.dataset.value === 'True') {
+        btn.classList.add('bg-neon-cyan/15', 'border-neon-cyan/40', 'text-neon-cyan');
+        btn.textContent = 'ON';
+      } else {
+        btn.classList.add('bg-void-950', 'border-titanium/30', 'text-moon-dim');
+        btn.textContent = 'OFF';
+      }
+    }
+
+    // =========================================================================
+    // createValueWidget — 根据参数类型创建对应的值输入控件
+    // =========================================================================
+    function createValueWidget(paramKey) {
+      const schema = PARAM_SCHEMA[paramKey];
+      if (!schema) return document.createElement('span');
+
+      const container = document.createElement('div');
+      container.className = 'flex-1';
+
+      if (schema.type === 'select' && schema.options) {
+        const sel = document.createElement('select');
+        sel.className = 'w-full bg-void-950 border border-titanium/30 rounded-btn px-2 py-1 text-xs font-mono text-moon focus:outline-none focus:border-neon-cyan/60 focus:ring-1 focus:ring-neon-cyan/30 transition-all duration-200';
+        schema.options.forEach(([val, label]) => {
+          const opt = document.createElement('option');
+          opt.value = val;
+          opt.textContent = label;
+          sel.appendChild(opt);
+        });
+        // 设置默认值
+        if (schema.default !== undefined) {
+          const defStr = typeof schema.default === 'string' ? schema.default : JSON.stringify(schema.default);
+          const match = Array.from(sel.options).find(o => o.value === defStr);
+          if (match) sel.value = defStr;
+        }
+        container.appendChild(sel);
+
+      } else if (schema.type === 'number') {
+        const inp = document.createElement('input');
+        inp.type = 'text';
+        inp.className = 'w-full bg-void-950 border border-titanium/30 rounded-btn px-2 py-1 text-xs font-mono text-moon text-right focus:outline-none focus:border-neon-purple/60 focus:ring-1 focus:ring-neon-purple/30 transition-all duration-200';
+        inp.value = schema.default !== undefined && schema.default !== null ? String(schema.default) : 'None';
+        container.appendChild(inp);
+
+      } else if (schema.type === 'bool') {
+        const btn = document.createElement('button');
+        btn.dataset.value = schema.default ? 'True' : 'False';
+        updateBoolToggle(btn);
+        btn.addEventListener('click', () => {
+          btn.dataset.value = btn.dataset.value === 'True' ? 'False' : 'True';
+          updateBoolToggle(btn);
+        });
+        container.appendChild(btn);
+
+      } else {
+        // text 类型
+        const inp = document.createElement('input');
+        inp.type = 'text';
+        inp.className = 'w-full bg-void-950 border border-titanium/30 rounded-btn px-2 py-1 text-xs font-mono text-moon focus:outline-none focus:border-neon-cyan/60 focus:ring-1 focus:ring-neon-cyan/30 transition-all duration-200';
+        inp.value = schema.default !== undefined ? String(schema.default) : '';
+        container.appendChild(inp);
+      }
+
+      return container;
+    }
+
+    // =========================================================================
+    // createDynamicParamRow — 生成一个 Key-Value 参数行（optgroup 分组）
+    // =========================================================================
+    function createDynamicParamRow(initialKey) {
+      const row = document.createElement('div');
+      row.className = 'dynamic-param-row flex items-center gap-1.5 animate-log-entry';
+
+      // 左侧：参数名下拉 — 下拉列表保留中文，选中后仅显示英文变量名
+      const selectWrapper = document.createElement('div');
+      selectWrapper.className = 'w-28 shrink-0 relative';
+
+      const keySelect = document.createElement('select');
+      keySelect.className = 'key-select w-full bg-void-950 border border-titanium/30 rounded-btn pl-2 pr-2 py-1 text-2xs font-mono focus:outline-none focus:border-neon-cyan/60 transition-all duration-200 appearance-none';
+
+      // Init Parameters optgroup（option text 保留中文）
+      const initGroup = document.createElement('optgroup');
+      initGroup.label = 'Init Parameters';
+      PARAM_GROUPS.init.forEach((k) => {
+        const opt = document.createElement('option');
+        opt.value = k;
+        opt.textContent = PARAM_SCHEMA[k].label;  // 带中文的下拉项
+        initGroup.appendChild(opt);
+      });
+      keySelect.appendChild(initGroup);
+
+      // Train Parameters optgroup
+      const trainGroup = document.createElement('optgroup');
+      trainGroup.label = 'Train Parameters';
+      PARAM_GROUPS.train.forEach((k) => {
+        const opt = document.createElement('option');
+        opt.value = k;
+        opt.textContent = PARAM_SCHEMA[k].label;
+        trainGroup.appendChild(opt);
+      });
+      keySelect.appendChild(trainGroup);
+
+      // 覆盖层：显示纯英文变量名
+      const displaySpan = document.createElement('span');
+      displaySpan.className = 'absolute inset-0 flex items-center pl-2 text-2xs font-mono text-neon-cyan pointer-events-none truncate';
+      selectWrapper.appendChild(keySelect);
+      selectWrapper.appendChild(displaySpan);
+      row.appendChild(selectWrapper);
+
+      // 右侧：值控件容器
+      const valueContainer = document.createElement('div');
+      valueContainer.className = 'flex-1';
+      row.appendChild(valueContainer);
+
+      // 设置初始 key 并生成对应的值控件
+      function setKey(newKey) {
+        row.dataset.paramKey = newKey;
+        row.dataset.paramType = PARAM_SCHEMA[newKey].type;
+        keySelect.value = newKey;
+        displaySpan.textContent = newKey;  // 覆盖层只显示英文变量名
+        valueContainer.innerHTML = '';
+        valueContainer.appendChild(createValueWidget(newKey));
+      }
+
+      keySelect.addEventListener('change', () => setKey(keySelect.value));
+      setKey(initialKey || PARAM_KEYS_ORDERED[0]);
+
+      // 删除按钮
+      const delBtn = document.createElement('button');
+      delBtn.className = 'text-moon-dim hover:text-neon-red transition-colors duration-200 p-0.5 shrink-0';
+      delBtn.title = '删除此参数';
+      delBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3l6 6M9 3L3 9"/></svg>';
+      delBtn.addEventListener('click', () => {
+        row.style.opacity = '0';
+        row.style.transition = 'opacity 0.2s ease-out';
+        setTimeout(() => row.remove(), 200);
+      });
+      row.appendChild(delBtn);
+
+      return row;
+    }
+
+    // =========================================================================
+    // getRowValue — 从动态参数行中提取 key 和解析后的 value
+    // =========================================================================
+    function getRowValue(row) {
+      const key = row.dataset.paramKey;
+      const type = row.dataset.paramType;
+      if (!key) return { key: null, value: null };
+
+      let raw;
+      if (type === 'select') {
+        const sel = row.querySelector('select:not([data-param-key])');  // 值 select，不是 key select
+        // Actually the first select is the key select, the second (if any) is the value
+        const allSelects = row.querySelectorAll('select');
+        raw = allSelects.length > 1 ? allSelects[1].value : null;
+      } else if (type === 'bool') {
+        const btn = row.querySelector('button[data-value]');
+        raw = btn ? btn.dataset.value : null;
+      } else {
+        const inp = row.querySelector('input');
+        raw = inp ? inp.value.trim() : null;
+      }
+
+      // 类型转换
+      let value;
+      if (raw === 'None' || raw === 'null' || raw === '' || raw === null) {
+        value = null;
+      } else if (type === 'bool') {
+        value = raw === 'True';
+      } else if (type === 'number') {
+        value = isNaN(Number(raw)) ? null : Number(raw);
+      } else if (type === 'select') {
+        // 尝试 JSON 解析（用于 list 类型如 pe_type）
+        try { value = JSON.parse(raw); } catch (e) { value = raw; }
+        if (value === 'None') value = null;
+      } else {
+        value = raw;
+      }
+
+      return { key, value };
+    }
+
+    // =========================================================================
+    // createExperimentCard — 精简实验卡片，默认仅包含实验名称
+    // =========================================================================
+    function createExperimentCard(index) {
+      const card = document.createElement('div');
+      card.className = 'param-card glass-panel rounded-panel border border-titanium/20 p-3 space-y-2.5 animate-slide-up';
+      card.dataset.expIndex = index;
+      card.style.animationDelay = `${index * 0.05}s`;
+
+      // 头部：编号 + 删除
+      const header = document.createElement('div');
+      header.className = 'flex items-center justify-between';
+      const title = document.createElement('div');
+      title.className = 'flex items-center gap-2';
+      const dot = document.createElement('span');
+      dot.className = 'w-1.5 h-1.5 rounded-full bg-neon-cyan/60';
+      title.appendChild(dot);
+      const label = document.createElement('span');
+      label.className = 'text-xs font-display tracking-wider text-neon-cyan';
+      label.textContent = `Exp ${index + 1}`;
+      title.appendChild(label);
+      header.appendChild(title);
+
+      const delBtn = document.createElement('button');
+      delBtn.className = 'text-moon-dim hover:text-neon-red transition-colors duration-200 p-0.5';
+      delBtn.title = '删除此实验';
+      delBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3l8 8M11 3L3 11"/></svg>';
+      delBtn.addEventListener('click', () => removeExperimentCard(card));
+      header.appendChild(delBtn);
+      card.appendChild(header);
+
+      // 实验名称
+      const nameDiv = document.createElement('div');
+      nameDiv.className = 'flex items-center gap-2';
+      const nameLbl = document.createElement('span');
+      nameLbl.className = 'text-2xs font-mono text-moon-dim shrink-0';
+      nameLbl.textContent = '名称';
+      nameDiv.appendChild(nameLbl);
+      const nameInput = document.createElement('input');
+      nameInput.type = 'text';
+      nameInput.dataset.paramKey = 'experiment_name';
+      nameInput.value = `Exp ${index + 1}`;
+      nameInput.className = 'flex-1 bg-void-950 border border-titanium/30 rounded-btn px-2 py-1 text-xs font-mono text-moon focus:outline-none focus:border-neon-cyan/60 focus:ring-1 focus:ring-neon-cyan/30 transition-all duration-200';
+      nameDiv.appendChild(nameInput);
+      card.appendChild(nameDiv);
+
+      // 动态参数行容器
+      const paramsDiv = document.createElement('div');
+      paramsDiv.className = 'card-dynamic-params space-y-1.5';
+      card.appendChild(paramsDiv);
+
+      // 添加参数按钮
+      const addBtn = document.createElement('button');
+      addBtn.className = 'flex items-center gap-1 text-2xs font-mono text-moon-dim hover:text-neon-cyan transition-colors duration-200 w-full pt-1';
+      addBtn.innerHTML = '<span class="text-neon-cyan">+</span> 添加实验参数';
+      addBtn.addEventListener('click', () => {
+        const row = createDynamicParamRow();
+        paramsDiv.appendChild(row);
+        row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      });
+      card.appendChild(addBtn);
+
+      return card;
+    }
+
+    function addExperimentCard() {
+      const index = STATE.experimentCounter++;
+      STATE.experimentCount++;
+      const card = createExperimentCard(index);
+      DOM.experimentsContainer.appendChild(card);
+      card.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      updateBaselineOptions();
+      return card;
+    }
+
+    function removeExperimentCard(card) {
+      if (STATE.experimentCount <= 1) {
+        appendLog('// 至少需要保留一个实验配置');
+        return;
+      }
+      card.style.opacity = '0';
+      card.style.transform = 'translateX(20px)';
+      card.style.transition = 'all 0.3s ease-out';
+      setTimeout(() => {
+        card.remove();
+        STATE.experimentCount--;
+        reindexCards();
+      }, 300);
+    }
+
+    function reindexCards() {
+      const cards = DOM.experimentsContainer.querySelectorAll('.param-card');
+      cards.forEach((card, i) => {
+        card.dataset.expIndex = i;
+        const titleSpan = card.querySelector('.text-neon-cyan');
+        if (titleSpan) titleSpan.textContent = `Exp ${i + 1}`;
+        const nameInput = card.querySelector('input[data-param-key="experiment_name"]');
+        if (nameInput && !nameInput.dataset.userModified) {
+          nameInput.value = `Exp ${i + 1}`;
+        }
+      });
+      updateBaselineOptions();
+    }
+
+    function updateBaselineOptions() {
+      const cards = DOM.experimentsContainer.querySelectorAll('.param-card');
+      const plotCards = DOM.plotGroupsContainer.querySelectorAll('.plot-group-card');
+      plotCards.forEach(pc => {
+        const sel = pc._baselineSel;
+        if (!sel) return;
+        const prevVal = sel.value;
+        sel.innerHTML = '';
+        const noneOpt = document.createElement('option');
+        noneOpt.value = '';
+        noneOpt.textContent = '无基线';
+        sel.appendChild(noneOpt);
+        cards.forEach((card, i) => {
+          const nameInput = card.querySelector('input[data-param-key="experiment_name"]');
+          const name = nameInput ? nameInput.value.trim() : `Exp ${i + 1}`;
+          const opt = document.createElement('option');
+          opt.value = String(i);
+          opt.textContent = `${i}: ${name}`;
+          sel.appendChild(opt);
+        });
+        if (prevVal && Array.from(sel.options).some(o => o.value === prevVal)) {
+          sel.value = prevVal;
+        }
+      });
+    }
+
+    // =========================================================================
+    // 收集表单数据
+    // =========================================================================
+    function collectParamsFromContainer(container) {
+      // 从动态行和 experiment_name 输入中收集参数
+      const params = {};
+
+      // experiment_name
+      const nameInput = container.querySelector('input[data-param-key="experiment_name"]');
+      if (nameInput && nameInput.value.trim()) {
+        params['experiment_name'] = nameInput.value.trim();
+      }
+
+      // 动态参数行
+      const rows = container.querySelectorAll('.dynamic-param-row');
+      rows.forEach((row) => {
+        const { key, value } = getRowValue(row);
+        if (key && value !== undefined) {
+          params[key] = value;
+        }
+      });
+
+      return params;
+    }
+
+    function collectParamsGroups() {
+      const cards = DOM.experimentsContainer.querySelectorAll('.param-card');
+      const groups = [];
+      cards.forEach((card) => {
+        const params = collectParamsFromContainer(card);
+        if (Object.keys(params).length > 0) {
+          groups.push(params);
+        }
+      });
+      return groups;
+    }
+
+    function collectGlobalManual() {
+      return collectParamsFromContainer(DOM.globalParamsContainer);
+    }
+
+    // =========================================================================
+    // 绘图指标 — 图表组卡片 (Plot Group Card)
+    // =========================================================================
+    function createMetricSelect(groupCard, type) {
+      // ——— 与实验卡片中 dynamic-param-row 风格一致 ———
+      const row = document.createElement('div');
+      row.className = 'metric-select-row flex items-center gap-1.5 animate-log-entry';
+
+      const sel = document.createElement('select');
+      sel.className = 'flex-1 bg-void-950 border border-titanium/30 rounded-btn px-2 py-1 text-xs font-mono text-moon focus:outline-none focus:border-neon-cyan/60 focus:ring-1 focus:ring-neon-cyan/30 transition-all duration-200';
+      function populate(t) {
+        sel.innerHTML = '';
+        (METRIC_SCHEMA[t] || []).forEach(([val, label]) => {
+          const opt = document.createElement('option');
+          opt.value = val;
+          opt.textContent = label;
+          sel.appendChild(opt);
+        });
+      }
+      populate(type);
+      row.appendChild(sel);
+
+      const delBtn = document.createElement('button');
+      delBtn.className = 'text-moon-dim hover:text-neon-red transition-colors duration-200 p-0.5 shrink-0';
+      delBtn.title = '删除此指标';
+      delBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3l6 6M9 3L3 9"/></svg>';
+      delBtn.addEventListener('click', () => {
+        row.style.opacity = '0';
+        row.style.transition = 'opacity 0.2s ease-out';
+        setTimeout(() => row.remove(), 200);
+      });
+      row.appendChild(delBtn);
+
+      return row;
+    }
+
+    function createPlotGroupCard(initialType) {
+      const type = initialType || 'epoch';
+      const card = document.createElement('div');
+      // ——— 与实验卡片完全一致的样式 ———
+      card.className = 'plot-group-card param-card glass-panel rounded-panel border border-titanium/20 p-3 space-y-2.5 animate-slide-up';
+      card.dataset.xType = type;
+      card.dataset.baselineIndex = '';  // 默认不设置 baseline
+
+      // 头部：编号 + Type 选择 + 删除（仿实验卡片 header 格式）
+      const header = document.createElement('div');
+      header.className = 'flex items-center justify-between';
+      const title = document.createElement('div');
+      title.className = 'flex items-center gap-2';
+      const dot = document.createElement('span');
+      dot.className = 'w-1.5 h-1.5 rounded-full bg-neon-green/60';
+      title.appendChild(dot);
+      const label = document.createElement('span');
+      label.className = 'text-xs font-display tracking-wider text-neon-green';
+      label.textContent = '图表组';
+      title.appendChild(label);
+      header.appendChild(title);
+
+      const delCardBtn = document.createElement('button');
+      delCardBtn.className = 'text-moon-dim hover:text-neon-red transition-colors duration-200 p-0.5';
+      delCardBtn.title = '删除此图表组';
+      delCardBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3l8 8M11 3L3 11"/></svg>';
+      delCardBtn.addEventListener('click', () => {
+        card.style.opacity = '0';
+        card.style.transform = 'translateX(20px)';
+        card.style.transition = 'all 0.3s ease-out';
+        setTimeout(() => card.remove(), 300);
+      });
+      header.appendChild(delCardBtn);
+      card.appendChild(header);
+
+      // Type 选择行（仿实验卡片中的参数行格式）
+      const typeDiv = document.createElement('div');
+      typeDiv.className = 'flex items-center gap-2';
+      const typeLbl = document.createElement('span');
+      typeLbl.className = 'text-2xs font-mono text-moon-dim shrink-0';
+      typeLbl.textContent = 'X轴';
+      typeDiv.appendChild(typeLbl);
+      const typeSel = document.createElement('select');
+      typeSel.className = 'flex-1 bg-void-950 border border-titanium/30 rounded-btn px-2 py-1 text-xs font-mono text-moon focus:outline-none focus:border-neon-cyan/60 focus:ring-1 focus:ring-neon-cyan/30 transition-all duration-200';
+      [['epoch','epoch'],['experiment','experiment']].forEach(([v,l]) => {
+        const opt = document.createElement('option');
+        opt.value = v; opt.textContent = l; typeSel.appendChild(opt);
+      });
+      typeSel.value = type;
+      typeDiv.appendChild(typeSel);
+      card.appendChild(typeDiv);
+
+      // Baseline 索引输入行
+      const baselineDiv = document.createElement('div');
+      baselineDiv.className = 'flex items-center gap-2';
+      const baselineLbl = document.createElement('span');
+      baselineLbl.className = 'text-2xs font-mono text-moon-dim shrink-0';
+      baselineLbl.textContent = '基线';
+      baselineDiv.appendChild(baselineLbl);
+      const baselineSel = document.createElement('select');
+      baselineSel.className = 'flex-1 bg-void-950 border border-titanium/30 rounded-btn px-2 py-1 text-xs font-mono text-moon focus:outline-none focus:border-neon-purple/60 focus:ring-1 focus:ring-neon-purple/30 transition-all duration-200';
+      const noneOpt = document.createElement('option');
+      noneOpt.value = '';
+      noneOpt.textContent = '无基线';
+      baselineSel.appendChild(noneOpt);
+      // 动态填充实验索引选项（由 updateBaselineOptions 维护）
+      baselineSel.addEventListener('change', () => {
+        card.dataset.baselineIndex = baselineSel.value;
+      });
+      card._baselineSel = baselineSel;
+      baselineDiv.appendChild(baselineSel);
+      card.appendChild(baselineDiv);
+
+      // 指标列表容器
+      const metricsDiv = document.createElement('div');
+      metricsDiv.className = 'plot-group-metrics space-y-1.5';
+      card.appendChild(metricsDiv);
+
+      // Type 变更 → 更新已有指标下拉框选项
+      typeSel.addEventListener('change', () => {
+        card.dataset.xType = typeSel.value;
+        const rows = metricsDiv.querySelectorAll('.metric-select-row select');
+        rows.forEach(sel => {
+          const curVal = sel.value;
+          sel.innerHTML = '';
+          (METRIC_SCHEMA[typeSel.value] || []).forEach(([val, label]) => {
+            const opt = document.createElement('option');
+            opt.value = val; opt.textContent = label; sel.appendChild(opt);
+          });
+          if (Array.from(sel.options).some(o => o.value === curVal)) sel.value = curVal;
+        });
+      });
+
+      // 默认添加一个指标行
+      metricsDiv.appendChild(createMetricSelect(card, type));
+
+      // 添加指标按钮（仿实验卡片 "+ 添加实验参数" 按钮）
+      const addMetricBtn = document.createElement('button');
+      addMetricBtn.className = 'flex items-center gap-1 text-2xs font-mono text-moon-dim hover:text-neon-cyan transition-colors duration-200 w-full pt-1';
+      addMetricBtn.innerHTML = '<span class="text-neon-cyan">+</span> 添加指标';
+      addMetricBtn.addEventListener('click', () => {
+        metricsDiv.appendChild(createMetricSelect(card, card.dataset.xType));
+      });
+      card.appendChild(addMetricBtn);
+
+      return card;
+    }
+
+    function collectResultLists() {
+      // ExperimentTable.run 格式: [(metrics_list, x_type), ...] 或 [(metrics_list, x_type, baseline_index), ...]
+      // 每个图表组卡片 = 一个独立的 Tuple，不合并同类型
+      const cards = DOM.plotGroupsContainer.querySelectorAll('.plot-group-card');
+      const result = [];
+      cards.forEach(card => {
+        const xType = card.dataset.xType || 'epoch';
+        const baselineIndex = card.dataset.baselineIndex;
+        const metrics = [];
+        const selects = card.querySelectorAll('.plot-group-metrics .metric-select-row select');
+        selects.forEach(sel => {
+          if (sel.value && !metrics.includes(sel.value)) {
+            metrics.push(sel.value);
+          }
+        });
+        if (metrics.length > 0) {
+          if (baselineIndex !== undefined && baselineIndex !== '') {
+            result.push([metrics, xType, parseInt(baselineIndex)]);
+          } else {
+            result.push([metrics, xType]);
+          }
+        }
+      });
+      return result;
+    }
+
+    function collectCompare() {
+      return DOM.compareToggle.dataset.value === 'True';
+    }
+
+    // =========================================================================
+    // clearAll — 一键清空所有配置
+    // =========================================================================
+    function clearAll() {
+      DOM.globalParamsContainer.innerHTML = '';
+      DOM.plotGroupsContainer.innerHTML = '';
+      DOM.plotGroupsContainer.appendChild(createPlotGroupCard('epoch'));
+      DOM.experimentsContainer.innerHTML = '';
+      STATE.experimentCounter = 0;
+      STATE.experimentCount = 1;
+      addExperimentCard();
+      updateBaselineOptions();
+      // 全局高级配置默认添加 epochs
+      const epochsRow = createDynamicParamRow('epochs');
+      DOM.globalParamsContainer.appendChild(epochsRow);
+      DOM.compareToggle.dataset.value = 'True';
+      DOM.compareToggle.innerHTML = '横向对比 (ON)';
+      DOM.compareToggle.className = 'text-xs font-mono px-3 py-1.5 rounded-btn border transition-all duration-200 w-full text-center bg-neon-cyan/15 border-neon-cyan/40 text-neon-cyan hover:bg-neon-cyan/25';
+      // 清空图表
+      STATE.chartData = {};
+      STATE.resultImages = [];
+      STATE.totalExperiments = 0;
+      if (STATE.chart) {
+        STATE.chart.setOption({ series: [], legend: { data: [] } });
+      }
+      DOM.chartPlaceholder.style.display = '';
+      DOM.smoothingBar.style.opacity = '0';
+      DOM.smoothingBar.style.pointerEvents = 'none';
+      // 隐藏结果区
+      DOM.resultsInline.classList.add('hidden');
+      DOM.resultsInlineContent.innerHTML = '';
+      appendLog('// ✓ 已清空所有配置，重置为默认状态');
+    }
+
+    // =========================================================================
+    // API 调用
+    // =========================================================================
+    async function startTraining() {
+      if (STATE.trainingStatus === 'running') return;
+
+      const paramsGroups = collectParamsGroups();
+      if (paramsGroups.length === 0) {
+        appendLog('// ⚠ 请至少添加一个实验配置');
+        return;
+      }
+
+      // 构建 manual：全局高级配置（默认已含 epochs=20）
+      const globalManual = collectGlobalManual();
+      const manual = { ...globalManual };
+      // 确保有 epochs 默认值
+      if (!('epochs' in manual)) manual.epochs = 20;
+
+      // 收集绘图指标配置 + Compare 模式
+      const resultLists = collectResultLists();
+      if (resultLists.length === 0) {
+        resultLists.push([['loss_history'], 'epoch']);
+      }
+      const compare = collectCompare();
+
+      // 重置图表数据
+      STATE.chartData = {};
+      paramsGroups.forEach((_, i) => {
+        STATE.chartData[`exp_${i}`] = { epochs: [], losses: [], name: paramsGroups[i].experiment_name || `Exp ${i + 1}` };
+      });
+      refreshChart();
+
+      try {
+        const resp = await fetch('/api/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            params_groups: paramsGroups,
+            manual: manual,
+            epochs_override: manual.epochs || 20,
+            result_lists: resultLists,
+            compare: compare,
+          }),
+        });
+
+        if (!resp.ok) {
+          const err = await resp.json();
+          appendLog(`// ✗ 启动失败: ${err.detail}`);
+          return;
+        }
+
+        const result = await resp.json();
+        appendLog(`// ▶ 训练已启动，共 ${result.total_experiments} 个实验`);
+      } catch (e) {
+        appendLog(`// ✗ 请求失败: ${e.message}`);
+      }
+    }
+
+    async function stopTraining() {
+      try {
+        const resp = await fetch('/api/stop', { method: 'POST' });
+        if (!resp.ok) {
+          const err = await resp.json();
+          appendLog(`// ⚠ ${err.detail}`);
+          return;
+        }
+        const result = await resp.json();
+        appendLog(`// ⊘ ${result.message}`);
+      } catch (e) {
+        appendLog(`// ✗ 停止请求失败: ${e.message}`);
+      }
+    }
+
+    async function fetchResults() {
+      try {
+        const resp = await fetch('/api/results');
+        if (!resp.ok) return;
+
+        const data = await resp.json();
+        STATE.resultImages = data.images || [];
+
+        if (STATE.resultImages.length > 0) {
+          renderResults(data);
+        }
+
+        // 打印摘要
+        if (data.summary) {
+          appendLog('// ── 训练摘要 ──');
+          data.summary.forEach((s) => {
+            const lossStr = s.final_loss !== null ? s.final_loss.toFixed(6) : 'N/A';
+            appendLog(`//   ${s.name}: Final Loss = ${lossStr} (${s.num_epochs} epochs)`);
+          });
+          appendLog('// ────────────');
+        }
+      } catch (e) {
+        appendLog(`// ✗ 获取结果失败: ${e.message}`);
+      }
+    }
+
+    async function loadBaselines() {
+      try {
+        const resp = await fetch('/api/baselines');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const select = DOM.baselineSelect;
+        // 保留默认选项
+        select.innerHTML = '<option value="">— 一键加载基线实验 —</option>';
+        Object.entries(data).forEach(([key, preset]) => {
+          const opt = document.createElement('option');
+          opt.value = key;
+          opt.textContent = preset.name;
+          select.appendChild(opt);
+        });
+      } catch (e) {
+        console.error('加载基线列表失败:', e);
+      }
+    }
+
+    async function applyBaseline() {
+      const key = DOM.baselineSelect.value;
+      if (!key) return;
+
+      try {
+        const resp = await fetch('/api/baselines');
+        const data = await resp.json();
+        const preset = data[key];
+        if (!preset) return;
+
+        // 清空现有实验卡片
+        DOM.experimentsContainer.innerHTML = '';
+        STATE.experimentCounter = 0;
+        STATE.experimentCount = preset.params_groups.length;
+
+        // 创建基线实验卡片并填充动态参数行
+        preset.params_groups.forEach((params, i) => {
+          STATE.experimentCounter = i;
+          const card = createExperimentCard(i);
+          DOM.experimentsContainer.appendChild(card);
+
+          // 获取动态参数行的容器
+          const paramsDiv = card.querySelector('.card-dynamic-params');
+          const addBtn = card.querySelector('button'); // "添加参数" 按钮
+          // 区分：最后一个 button 是"添加参数"按钮，需要跳过
+
+          Object.entries(params).forEach(([paramKey, paramValue]) => {
+            if (paramKey === 'experiment_name') {
+              // 填充实验名称
+              const nameInput = card.querySelector('input[data-param-key="experiment_name"]');
+              if (nameInput) {
+                nameInput.value = String(paramValue);
+                nameInput.dataset.userModified = 'true';
+              }
+              return;
+            }
+
+            // 检查该参数是否在 PARAM_SCHEMA 中
+            if (!PARAM_SCHEMA[paramKey]) return;
+
+            // 创建动态行并设置值
+            const row = createDynamicParamRow(paramKey);
+            // 动态行插入到 "添加参数" 按钮之前
+            paramsDiv.appendChild(row);
+
+            // 设置值
+            setRowValue(row, paramKey, paramValue);
+          });
+        });
+
+        STATE.experimentCounter = preset.params_groups.length;
+
+        // 应用全局 manual 参数（包括 epochs）
+        if (preset.manual) {
+          // 清除旧的全局参数行
+          DOM.globalParamsContainer.innerHTML = '';
+          // 为 manual 中每个参数创建行
+          Object.entries(preset.manual).forEach(([mKey, mValue]) => {
+            if (mKey === 'print_every') return;
+            if (!PARAM_SCHEMA[mKey]) return;
+            const row = createDynamicParamRow(mKey);
+            DOM.globalParamsContainer.appendChild(row);
+            setRowValue(row, mKey, mValue);
+          });
+        }
+
+        appendLog(`// ✓ 已加载基线实验: ${preset.name}`);
+      } catch (e) {
+        appendLog(`// ✗ 加载基线失败: ${e.message}`);
+      }
+    }
+
+    // =========================================================================
+    // setRowValue — 给动态参数行设置值（用于基线加载等场景）
+    // =========================================================================
+    function setRowValue(row, paramKey, paramValue) {
+      const schema = PARAM_SCHEMA[paramKey];
+      if (!schema) return;
+
+      if (schema.type === 'select') {
+        const selects = row.querySelectorAll('select');
+        if (selects.length > 1) {
+          const valSelect = selects[1];
+          // 规范化目标值：统一转为紧凑 JSON 字符串（无空格）用来匹配 option value
+          let targetStr;
+          if (typeof paramValue === 'string') {
+            // 尝试解析为 JSON，如果是数组/对象则重新序列化为紧凑格式
+            try { const p = JSON.parse(paramValue); targetStr = JSON.stringify(p); }
+            catch (e) { targetStr = paramValue; }
+          } else if (paramValue === null || paramValue === undefined) {
+            targetStr = 'None';
+          } else {
+            targetStr = JSON.stringify(paramValue);
+          }
+
+          // 先尝试精确匹配
+          let matched = false;
+          for (const opt of valSelect.options) {
+            if (opt.value === targetStr) { valSelect.value = targetStr; matched = true; break; }
+          }
+          // 若失败，尝试宽松匹配（去除所有空格后比较）
+          if (!matched) {
+            const compact = (s) => s.replace(/\s/g, '');
+            const tCompact = compact(targetStr);
+            for (const opt of valSelect.options) {
+              if (compact(opt.value) === tCompact) { valSelect.value = opt.value; break; }
+            }
+          }
+        }
+      } else if (schema.type === 'bool') {
+        const btn = row.querySelector('button[data-value]');
+        if (btn) {
+          btn.dataset.value = String(paramValue);
+          updateBoolToggle(btn);
+        }
+      } else {
+        const inp = row.querySelector('input');
+        if (inp) {
+          inp.value = paramValue !== null && paramValue !== undefined ? String(paramValue) : 'None';
+        }
+      }
+    }
+
+    // =========================================================================
+    // 结果渲染
+    // =========================================================================
+    function renderResults(data) {
+      DOM.resultsInlineContent.innerHTML = '';
+
+      // 摘要表格
+      if (data.summary && data.summary.length > 0) {
+        const summaryDiv = document.createElement('div');
+        summaryDiv.className = 'space-y-2';
+        const title = document.createElement('h4');
+        title.className = 'text-xs font-display tracking-wider text-moon-dim uppercase';
+        title.textContent = '训练摘要';
+        summaryDiv.appendChild(title);
+
+        const table = document.createElement('div');
+        table.className = 'border border-titanium/30 rounded-card overflow-hidden';
+        const tableInner = document.createElement('table');
+        tableInner.className = 'w-full text-xs font-mono';
+        tableInner.innerHTML = `
+          <thead class="bg-void-800">
+            <tr>
+              <th class="px-3 py-2 text-left text-moon-dim font-normal">实验</th>
+              <th class="px-3 py-2 text-right text-moon-dim font-normal">Final Loss</th>
+              <th class="px-3 py-2 text-right text-moon-dim font-normal">y_pred RMS</th>
+              <th class="px-3 py-2 text-right text-moon-dim font-normal">y_true RMS</th>
+              <th class="px-3 py-2 text-right text-moon-dim font-normal">Epochs</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${data.summary.map(s => `
+              <tr class="border-t border-titanium/20 hover:bg-void-800/50 transition-colors">
+                <td class="px-3 py-2 text-neon-cyan">${s.name}</td>
+                <td class="px-3 py-2 text-right font-medium">${s.final_loss !== null ? s.final_loss.toFixed(6) : 'N/A'}</td>
+                <td class="px-3 py-2 text-right text-moon-dim">${s.final_y_pred_norm !== undefined ? s.final_y_pred_norm.toFixed(4) : '-'}</td>
+                <td class="px-3 py-2 text-right text-moon-dim">${s.final_y_true_norm !== undefined ? s.final_y_true_norm.toFixed(4) : '-'}</td>
+                <td class="px-3 py-2 text-right text-moon-dim">${s.num_epochs}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        `;
+        table.appendChild(tableInner);
+        summaryDiv.appendChild(table);
+        DOM.resultsInlineContent.appendChild(summaryDiv);
+      }
+
+      // 图表图片
+      data.images.forEach((imgBase64, i) => {
+        const imgDiv = document.createElement('div');
+        imgDiv.className = 'space-y-2';
+        const imgTitle = document.createElement('h4');
+        imgTitle.className = 'text-xs font-display tracking-wider text-moon-dim uppercase';
+        imgTitle.textContent = `结果图 ${i + 1}`;
+        imgDiv.appendChild(imgTitle);
+
+        const imgWrapper = document.createElement('div');
+        imgWrapper.className = 'border border-titanium/30 rounded-card overflow-hidden bg-void-950';
+        const img = document.createElement('img');
+        img.src = `data:image/png;base64,${imgBase64}`;
+        img.className = 'w-full h-auto';
+        img.alt = `Result plot ${i + 1}`;
+        imgWrapper.appendChild(img);
+        imgDiv.appendChild(imgWrapper);
+
+        // 下载按钮
+        const downloadBtn = document.createElement('button');
+        downloadBtn.className = 'btn-glow inline-flex items-center gap-1.5 px-3 py-1.5 bg-void-800 border border-neon-cyan/20 rounded-btn text-2xs font-display tracking-wider text-neon-cyan hover:border-neon-cyan/60 hover:bg-neon-cyan/5 active:scale-95 transition-all duration-200 uppercase';
+        downloadBtn.textContent = '下载';
+        downloadBtn.addEventListener('click', () => downloadImage(imgBase64, `result_${i + 1}.png`));
+        imgDiv.appendChild(downloadBtn);
+
+        DOM.resultsInlineContent.appendChild(imgDiv);
+      });
+
+      // 下载全部按钮
+      if (data.images && data.images.length > 1) {
+        const downloadAllDiv = document.createElement('div');
+        downloadAllDiv.className = 'pt-2 border-t border-titanium/20';
+        const btn = document.createElement('button');
+        btn.className = 'btn-glow px-4 py-2 bg-void-800 border border-neon-cyan/20 rounded-btn text-xs font-display tracking-wider text-neon-cyan hover:border-neon-cyan/60 hover:bg-neon-cyan/5 active:scale-95 transition-all duration-200 uppercase';
+        btn.textContent = '下载全部图片';
+        btn.addEventListener('click', downloadAllImages);
+        downloadAllDiv.appendChild(btn);
+        DOM.resultsInlineContent.appendChild(downloadAllDiv);
+      }
+
+      // 显示结果区
+      DOM.resultsInline.classList.remove('hidden');
+      // 自动滚动到结果区
+      DOM.resultsInline.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function downloadImage(base64, filename) {
+      const link = document.createElement('a');
+      link.href = `data:image/png;base64,${base64}`;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+
+    function exportChartPNG() {
+      if (!STATE.chart) return;
+      const url = STATE.chart.getDataURL({
+        type: 'png',
+        pixelRatio: 2,
+        backgroundColor: '#0a0a0f',
+      });
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'looped_transformer_chart.png';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      appendLog('// ✓ 图表已导出为 PNG');
+    }
+
+    function downloadAllImages() {
+      if (STATE.resultImages.length === 0) return;
+      STATE.resultImages.forEach((img, i) => {
+        setTimeout(() => downloadImage(img, `looped_transformer_result_${i + 1}.png`), i * 200);
+      });
+    }
+
+    // =========================================================================
+    // 事件绑定
+    // =========================================================================
+    function init() {
+      // ECharts 初始化
+      initChart();
+
+      // WebSocket 连接
+      connectWebSocket();
+
+      // 加载基线实验列表
+      loadBaselines();
+
+      // 默认创建第一个实验卡片
+      addExperimentCard();
+
+      // 全局高级配置默认包含 epochs
+      const defaultEpochsRow = createDynamicParamRow('epochs');
+      DOM.globalParamsContainer.appendChild(defaultEpochsRow);
+
+      // 默认图表组：epoch → loss_history
+      DOM.plotGroupsContainer.appendChild(createPlotGroupCard('epoch'));
+
+      // Compare 开关
+      DOM.compareToggle.addEventListener('click', () => {
+        const isOn = DOM.compareToggle.dataset.value === 'True';
+        DOM.compareToggle.dataset.value = isOn ? 'False' : 'True';
+        DOM.compareToggle.innerHTML = isOn
+          ? '独立双Y轴 (OFF)'
+          : '横向对比 (ON)';
+        DOM.compareToggle.className = isOn
+          ? 'text-xs font-mono px-3 py-1.5 rounded-btn border transition-all duration-200 w-full text-center bg-void-950 border-titanium/30 text-moon-dim hover:bg-neon-purple/10'
+          : 'text-xs font-mono px-3 py-1.5 rounded-btn border transition-all duration-200 w-full text-center bg-neon-cyan/15 border-neon-cyan/40 text-neon-cyan hover:bg-neon-cyan/25';
+      });
+
+      // 折叠/展开 — 实验配置
+      DOM.configHeader.addEventListener('click', () => {
+        const body = DOM.configBody;
+        const hidden = body.style.display === 'none';
+        body.style.display = hidden ? '' : 'none';
+        DOM.configCollapseBtn.querySelector('svg').innerHTML = hidden
+          ? '<path d="M3 5l4 4 4-4"/>'
+          : '<path d="M3 9l4-4 4 4"/>';
+        DOM.configCollapseBtn.querySelector('svg').setAttribute('viewBox', '0 0 14 14');
+      });
+
+      // 折叠/展开 — 绘图指标
+      DOM.metricsHeader.addEventListener('click', () => {
+        const body = DOM.metricsBody;
+        const hidden = body.style.display === 'none';
+        body.style.display = hidden ? '' : 'none';
+        DOM.metricsCollapseBtn.querySelector('svg').innerHTML = hidden
+          ? '<path d="M3 5l4 4 4-4"/>'
+          : '<path d="M3 9l4-4 4 4"/>';
+        DOM.metricsCollapseBtn.querySelector('svg').setAttribute('viewBox', '0 0 14 14');
+      });
+
+      // 全局参数按钮
+      DOM.addGlobalParamBtn.addEventListener('click', () => {
+        const row = createDynamicParamRow();
+        DOM.globalParamsContainer.appendChild(row);
+      });
+
+      // 添加实验按钮
+      DOM.addExperimentBtn.addEventListener('click', addExperimentCard);
+
+      // 加载基线按钮
+      DOM.loadBaselineBtn.addEventListener('click', applyBaseline);
+
+      // 清空按钮
+      DOM.clearAllBtn.addEventListener('click', clearAll);
+
+      // 添加指标按钮
+      DOM.addPlotGroupBtn.addEventListener('click', () => {
+        DOM.plotGroupsContainer.appendChild(createPlotGroupCard('epoch'));
+      });
+
+      // 清空绘图指标按钮
+      DOM.clearMetricsBtn.addEventListener('click', () => {
+        DOM.plotGroupsContainer.innerHTML = '';
+        DOM.plotGroupsContainer.appendChild(createPlotGroupCard('epoch'));
+        appendLog('// ✓ 已清空绘图指标配置');
+      });
+
+      // Smoothing 滑块 — 实时 EMA 重绘
+      DOM.smoothingSlider.addEventListener('input', () => {
+        STATE.smoothing = parseFloat(DOM.smoothingSlider.value);
+        DOM.smoothingValue.textContent = STATE.smoothing.toFixed(2);
+        refreshChart();
+      });
+
+      // 导出 ECharts 图表为 PNG
+      DOM.exportChartBtn.addEventListener('click', exportChartPNG);
+
+      // 启动训练
+      DOM.startBtn.addEventListener('click', startTraining);
+
+      // 终止训练
+      DOM.stopBtn.addEventListener('click', stopTraining);
+
+      // 清空日志
+      DOM.clearLogBtn.addEventListener('click', () => {
+        DOM.logConsole.innerHTML = '<div class="text-moon-dim/50 italic">// 日志已清空</div>';
+      });
+
+      // 可拖动分隔线
+      const splitter = document.getElementById('splitter');
+      const sidebar = DOM.sidebar;
+      let isDragging = false, startX, startWidth;
+
+      splitter.addEventListener('mousedown', (e) => {
+        if (sidebar.style.minWidth === '0px') return;
+        isDragging = true;
+        startX = e.clientX;
+        startWidth = sidebar.offsetWidth;
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        splitter.classList.add('bg-neon-cyan/60');
+        e.preventDefault();
+      });
+
+      document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        const delta = e.clientX - startX;
+        const newWidth = Math.max(240, Math.min(500, startWidth + delta));
+        sidebar.style.width = newWidth + 'px';
+        if (STATE.chart) STATE.chart.resize();
+      });
+
+      document.addEventListener('mouseup', () => {
+        if (!isDragging) return;
+        isDragging = false;
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        splitter.classList.remove('bg-neon-cyan/60');
+      });
+
+      // 侧边栏折叠/展开
+      const sidebarExpandBtn = $('#sidebar-expand-btn');
+      let sidebarVisible = true;
+      function toggleSidebar() {
+        sidebarVisible = !sidebarVisible;
+        const toggleSvg = $('#sidebar-toggle').querySelector('svg');
+        if (sidebarVisible) {
+          sidebar.style.width = '320px';
+          sidebar.style.minWidth = '280px';
+          sidebar.style.maxWidth = '500px';
+          splitter.style.display = '';
+          toggleSvg.innerHTML = '<path d="M4 3l-3 5 3 5M11 2v12"/>';
+          sidebarExpandBtn.classList.add('hidden');
+        } else {
+          sidebar.style.width = '0px';
+          sidebar.style.minWidth = '0px';
+          sidebar.style.maxWidth = '0px';
+          splitter.style.display = 'none';
+          toggleSvg.innerHTML = '<path d="M9 3l3 5-3 5M5 2v12"/>';
+          sidebarExpandBtn.classList.remove('hidden');
+        }
+        setTimeout(() => { if (STATE.chart) STATE.chart.resize(); }, 250);
+      }
+      $('#sidebar-toggle').addEventListener('click', toggleSidebar);
+      sidebarExpandBtn.addEventListener('click', toggleSidebar);
+
+      // 移动端菜单切换
+      DOM.menuToggle.addEventListener('click', () => {
+        DOM.sidebar.classList.toggle('open');
+      });
+
+      // 点击主区域关闭侧边栏（移动端）
+      document.querySelector('main').addEventListener('click', (e) => {
+        if (window.innerWidth < 1024 && DOM.sidebar.classList.contains('open')) {
+          if (!DOM.sidebar.contains(e.target) && e.target !== DOM.menuToggle) {
+            DOM.sidebar.classList.remove('open');
+          }
+        }
+      });
+
+      // 页面关闭时清理
+      window.addEventListener('beforeunload', () => {
+        if (STATE.ws) {
+          STATE.ws.close();
+        }
+        stopHeartbeat();
+        if (STATE.chart) {
+          STATE.chart.dispose();
+        }
+      });
+
+      appendLog('// 监控面板初始化完成');
+    }
+
+    // 启动
+    document.addEventListener('DOMContentLoaded', init);
+  </script>
+</body>
+</html>
