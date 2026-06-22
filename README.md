@@ -184,6 +184,32 @@ result_lists = [
 ]
 ```
 
+### params_groups 格式
+
+所有可覆写参数见[可覆写参数一览](#可覆写参数default_setup)。`ExperimentTable.__init__` 接收 `params_groups`（实验列表）和可选的 `manual`（全局覆写）。
+
+```python
+# 模板：[ {实验1字典}, {实验2字典}, ... ]
+#   最外层 []  = 实验列表
+#   里面 {}    = 每个实验的参数字典
+
+params_groups = [
+    # 实验 1
+    {
+        'experiment_name': '基线',           # 必填：实验名称
+        'pe_type': ['learned_ape'],          # ⚠️ 就算只有一个 PE，也必须用中括号 []
+        'residual_gate': (1, 1),             # 门控初始值用小括号 ()
+    },
+    # 实验 2
+    {
+        'experiment_name': 'OOD测试',
+        'pe_type': ['ms_upe', 'alibi'],      # 多个 PE 用逗号隔开，套在中括号 [] 里
+        'residual_gate': 'random',           # 字符串直接写
+        'residual_gate_type': 'learnable_scalar',
+    },
+]
+```
+
 ### run 参数
 
 | 参数 | 类型 | 默认 | 说明 |
@@ -290,16 +316,60 @@ result_lists = [
 
 ## 已完成实验的发现
 
-从 commit 历史与实验报告提炼的关键结论（参数都是试出来的）：
+从 commit 历史与实验报告提炼的关键结论（参数都是试出来的）。
 
-1. **Scheduled Training**：训练初期 loss 更低更稳，长期收敛点相近——故默认 `scheduled_training=False`（"用处并不大"）。
-2. **PE 对比（线性任务）**：ALiBi 综合最优；score/QK 层面注入（ALiBi/RoPE）优于输入端（LearnedAPE）；MS-UPE + LearnedAPE 叠加**无益**。
-3. **Sink Padding**：线性任务无明显收益（各组曲线重叠），默认 `None`。
-4. **Residual Gate**：对初值不敏感，可学习门控的 a/b 漂移幅度 < 0.2。
-5. **Curriculum Learning**：打破"d_x 之墙"（高维线性回归 loss 极难下降），从低维短序列起步逐步放大是关键。
-6. **Lorenz 消融**：与线性任务相反，**MS-UPE + ALiBi 叠加在此任务有效**；Muon/Nora + swiglu + cosine 为最佳组合。
-7. **收缩吸引子定理**：MSE loss 下，Looped Transformer 必然收敛到 shrinkage estimator（λ\*≈0.5–0.7）。
-8. **OOD 标度律**：loss 与 norm ratio 满足幂律 `L = A·R^B`，跨线性/非线性/Lorenz 三任务验证。
+### 1. Scheduled Training vs Non-Scheduled
+
+![Scheduled vs Non-Scheduled](figures/scheduled%20vs%20non-scheduled.png)
+
+**发现**：渐进式增加有效层数（Scheduled Training）的初期 loss 更低更稳，长期收敛点相近——故默认 `scheduled_training=False`。
+
+### 2. 位置编码对比（5 种 PE）
+
+![PE 对比](figures/PE%E5%AF%B9%E6%AF%94.png)
+
+**发现**：ALiBi 综合最优；score/QK 层面注入（ALiBi/RoPE）优于输入端（LearnedAPE）；MS-UPE + LearnedAPE 叠加**无益**。在循环架构中，在 score/QK 层面注入位置信息优于仅在输入端加入。
+
+### 3. Sink Padding 消融
+
+![Sink Padding 对比](figures/sink_padding%E5%AF%B9%E6%AF%94%E5%AE%9E%E9%AA%8C.png)
+
+**发现**：各组曲线高度重叠，sink padding 对最终 Loss 没有决定性正面影响——默认 `None`。
+
+### 4. 残差门控消融
+
+![Residual Gate Loss 对比](figures/residual_gate%20loss%E5%AF%B9%E6%AF%94.png)
+
+![Residual Gate 相对变化](figures/residual_gate%20relative%20changes.png)
+
+**发现**：所有门控配置收敛水平接近，对初始值不敏感；可学习门控的 a/b 漂移幅度 < 0.2，模型倾向维持接近初始值的门控策略。
+
+### 5. Curriculum Learning（打破"d_x 之墙"）
+
+![Linear Curriculum](figures/linear_curriculum_learning%E8%AE%AD%E7%BB%83.png)
+
+![Lorenz Curriculum](figures/lorenz_curriculum_learning%E8%AE%AD%E7%BB%83.png)
+
+**发现**：从低维短序列起步、逐步放大的 curriculum 有效打破高维线性回归的"d_x 之墙"；
+在 nonlinear 和 Lorenz 任务上同样显著提升收敛速度与最终精度。
+
+### 6. Lorenz 消融
+
+![Lorenz PE Ablation](figures/lorenz_ablation_compare/pe.png)
+
+![Lorenz Optimizer](figures/lorenz_ablation_compare/optimizer.png)
+
+**发现**：与线性任务相反，`ms_upe + alibi` 叠加在此任务有效；muon_adamw + swiglu + cosine 为最佳组合。
+
+### 7. 收缩吸引子定理
+
+MSE loss 下，Looped Transformer 必然收敛到 shrinkage estimator（λ\*≈0.5–0.7）——模型"学会"了在预测方差与偏差之间做最优权衡。
+
+### 8. OOD 标度律
+
+![Unified Dots](figures/unified_dots.png)
+
+loss 与 norm ratio 满足跨任务幂律 `L = A·R^B`，在 linear/nonlinear/Lorenz 三任务、多种 OOD 场景下验证。
 
 ---
 
@@ -341,8 +411,57 @@ uv pip install -r requirements.txt
 
 ## 待完成与未来工作
 
-- **实验框架**：`plot()` 对 `'block'` 横轴的多场景对比、3D 动画导出；
-- **任务扩展**：ODE 数据生成器、逻辑推理任务；
-- **模型探针**：各层线性探针检测闭式解 $w=(X^\top X)^{-1}X^\top y$ 的涌现；
-- **归一化**：W_Q/W_K/W_V 的谱归一化对稳定性的影响；
-- **Grokking**：大 epochs/batch 下观察顿悟现象。
+按上手难度从低到高排列。每个任务均标注了状态与涉及的文件。
+
+### A. 开箱即用
+
+无需改代码，直接用 `ExperimentTable` 跑。
+
+#### 全参数扫描 ✅ 已实现
+
+利用 `ExperimentTable` 对任意参数进行对比实验：离散参数枚举取值 → `run()` → `plot()`；
+连续参数已通过 Optuna 搜参（见 `experiments/optuna/hpo.py`）。
+
+### B. 少量扩展
+
+#### 两处 pass 补全 ✅ 已实现
+
+`plot()` 中已支持实验汇总柱状图（横轴 `'experiment'`）和评估结果画图（`modes=['evaluate']`）。
+
+#### 首 loss 归一化
+
+新增 `plot()` 选项，将每条 loss 曲线除以其首个 epoch 值，消除初始尺度差异，只看相对下降幅度。
+
+#### 分头 attention 可视化
+
+利用已有的 `AttentionProbe` 捕获的 `captured_attention`，按头切片画热力图，观察不同头的注意力模式差异。
+
+#### 模型探针
+
+在 `ToyModel` 各层插入线性探针，检测模型在何时学会线性回归的闭式解 $w = (X^TX)^{-1}X^Ty$。
+
+#### Grokking 观察
+
+在大显存设备上增大 `epochs` 和 `batch_size`，观察是否出现顿悟现象（loss 长时间不降后突然收敛）。
+
+### C. 新模块开发
+
+需要新建模块或对核心架构做较大改动。
+
+#### 画梯度下降图
+
+在 `experiment.py` 训练循环中收集梯度范数或参数变化轨迹，新增可视化模块画参数空间中的优化路径。
+
+#### 添加归纳偏置
+
+在 `toy_model.py` 或 `transformer_block.py` 中引入结构性先验：正交/恒等初始化、低秩分解、门控范围约束等。
+
+#### 新任务扩展
+
+- 逻辑推理任务（离散序列预测等）
+- 更多物理系统（ODE 生成器——目前 Lorenz 已支持，可扩展双摆、Van der Pol 等）
+
+#### ExperimentTable GUI ✅ 已实现
+
+见上方 [Web 监控面板](#web-监控面板)。基于 FastAPI + HTML/ECharts，
+支持参数配置、基线加载、实时 Loss、安全中断、EMA 平滑、Compare 模式。
