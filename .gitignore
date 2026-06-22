@@ -6,3 +6,6 @@ __pycache__/
 *.json
 *.log
 *.pth
+data/
+saved_checkpoints/
+figures/
